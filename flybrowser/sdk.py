@@ -918,7 +918,11 @@ class FlyBrowser:
         if self._active_stream_id:
             raise RuntimeError("Stream already active. Stop current stream first.")
         
-        # Convert protocol string to enum FIRST
+        # Create temporary output directory for streams FIRST
+        stream_dir = Path(tempfile.gettempdir()) / "flybrowser_streams"
+        stream_dir.mkdir(exist_ok=True)
+        
+        # Convert protocol string to enum
         protocol_map = {
             "hls": StreamingProtocol.HLS,
             "dash": StreamingProtocol.DASH,
@@ -926,7 +930,15 @@ class FlyBrowser:
         }
         stream_protocol = protocol_map.get(protocol.lower(), StreamingProtocol.HLS)
         
-        # Start local HTTP server FIRST to get the port
+        # Convert codec string to enum
+        codec_map = {
+            "h264": VideoCodec.H264,
+            "h265": VideoCodec.H265,
+            "vp9": VideoCodec.VP9,
+        }
+        video_codec = codec_map.get(codec.lower(), VideoCodec.H264)
+        
+        # Start local HTTP server to get the port (only for HLS/DASH)
         if not self._local_stream_server and stream_protocol in [StreamingProtocol.HLS, StreamingProtocol.DASH]:
             await self._start_local_stream_server(stream_dir)
         
@@ -938,18 +950,6 @@ class FlyBrowser:
                 base_url=base_url,
                 max_concurrent_streams=1
             )
-        
-        # Convert codec string to enum
-        codec_map = {
-            "h264": VideoCodec.H264,
-            "h265": VideoCodec.H265,
-            "vp9": VideoCodec.VP9,
-        }
-        video_codec = codec_map.get(codec.lower(), VideoCodec.H264)
-        
-        # Create temporary output directory for streams
-        stream_dir = Path(tempfile.gettempdir()) / "flybrowser_streams"
-        stream_dir.mkdir(exist_ok=True)
         
         # Generate unique stream ID
         stream_id = f"stream_{uuid.uuid4().hex[:8]}"
