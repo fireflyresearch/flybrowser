@@ -125,6 +125,10 @@ PACKAGE_MANAGER="pip"  # pip or uv
 INSTALLATION_IN_PROGRESS=false
 INTERRUPTED=false
 
+# Global arrays for Python detection (initialized empty to avoid unbound variable errors)
+DETECTED_PYTHONS=()
+DETECTED_PYTHON_INFO=()
+
 # Cleanup on exit
 cleanup() {
     local exit_code=$?
@@ -310,30 +314,80 @@ check_uv() {
 # Selected Python executable (set by select_python_version)
 SELECTED_PYTHON="python3"
 
-# Detect available Python versions
+# Check if a Python executable is Python 3 (rejects Python 2)
+is_python3() {
+    local py_path="$1"
+    local major
+    major=$($py_path -c 'import sys; print(sys.version_info.major)' 2>/dev/null) || return 1
+    [ "$major" -eq 3 ]
+}
+
+# Get Python version as comparable integer (e.g., 3.11.5 -> 3011005)
+get_python_version_number() {
+    local py_path="$1"
+    $py_path -c 'import sys; print(sys.version_info.major * 1000000 + sys.version_info.minor * 1000 + sys.version_info.micro)' 2>/dev/null
+}
+
+# Detect available Python 3 versions
 detect_python_versions() {
     local -a pythons=()
     local -a python_info=()
+    local -a python_versions=()  # For sorting
     
-    # Common Python executable names to check
+    # Only check Python 3 executables (Python 2 is NOT supported)
     local -a candidates=(
+        "python3.14"
         "python3.13"
         "python3.12"
         "python3.11"
         "python3.10"
         "python3.9"
         "python3"
-        "python"
     )
     
-    # Also check common installation paths
+    # Common installation paths (varies by OS)
     local -a paths=(
         "/usr/local/bin"
         "/usr/bin"
-        "/opt/homebrew/bin"
-        "$HOME/.pyenv/shims"
-        "$HOME/.local/bin"
+        "/opt/homebrew/bin"      # macOS Apple Silicon
+        "/opt/local/bin"         # macOS MacPorts
+        "$HOME/.pyenv/shims"     # pyenv
+        "$HOME/.local/bin"       # pip --user installs
+        "/snap/bin"              # Linux snap
     )
+    
+    # Helper function to add Python if valid and not duplicate
+    add_python_if_valid() {
+        local py_path="$1"
+        
+        # Skip if not Python 3
+        if ! is_python3 "$py_path"; then
+            return
+        fi
+        
+        local version
+        version=$($py_path -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null) || return
+        
+        local version_num
+        version_num=$(get_python_version_number "$py_path") || return
+        
+        # Check if this version is already in our list (avoid duplicates)
+        local found=false
+        if [ ${#python_info[@]} -gt 0 ]; then
+            for existing in "${python_info[@]}"; do
+                if [[ "$existing" == *"$version"* ]]; then
+                    found=true
+                    break
+                fi
+            done
+        fi
+        
+        if [ "$found" = false ]; then
+            pythons+=("$py_path")
+            python_info+=("Python $version ($py_path)")
+            python_versions+=("$version_num")
+        fi
+    }
     
     # Check each candidate
     for candidate in "${candidates[@]}"; do
@@ -341,56 +395,62 @@ detect_python_versions() {
         if command -v "$candidate" &> /dev/null; then
             local py_path
             py_path=$(command -v "$candidate")
-            local version
-            version=$($py_path -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null) || continue
-            
-            # Check if this version is already in our list (avoid duplicates)
-            local found=false
-            for existing in "${python_info[@]}"; do
-                if [[ "$existing" == *"$version"* ]]; then
-                    found=true
-                    break
-                fi
-            done
-            
-            if [ "$found" = false ]; then
-                pythons+=("$py_path")
-                python_info+=("Python $version ($py_path)")
-            fi
+            add_python_if_valid "$py_path"
         fi
         
         # Also check in specific paths
         for path in "${paths[@]}"; do
             local full_path="$path/$candidate"
             if [ -x "$full_path" ] && [ -f "$full_path" ]; then
-                local version
-                version=$($full_path -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null) || continue
-                
-                # Check for duplicates
-                local found=false
-                for existing in "${python_info[@]}"; do
-                    if [[ "$existing" == *"$version"* ]]; then
-                        found=true
-                        break
-                    fi
-                done
-                
-                if [ "$found" = false ]; then
-                    pythons+=("$full_path")
-                    python_info+=("Python $version ($full_path)")
-                fi
+                add_python_if_valid "$full_path"
             fi
         done
     done
     
-    # Store results in global arrays
-    DETECTED_PYTHONS=("${pythons[@]}")
-    DETECTED_PYTHON_INFO=("${python_info[@]}")
+    # Sort by version (highest first) and store results
+    if [ ${#pythons[@]} -gt 0 ]; then
+        # Create index array for sorting
+        local -a indices=()
+        for i in "${!python_versions[@]}"; do
+            indices+=("$i")
+        done
+        
+        # Bubble sort indices by version (descending)
+        local n=${#indices[@]}
+        for ((i = 0; i < n - 1; i++)); do
+            for ((j = 0; j < n - i - 1; j++)); do
+                local idx1=${indices[$j]}
+                local idx2=${indices[$((j + 1))]}
+                if [ "${python_versions[$idx1]}" -lt "${python_versions[$idx2]}" ]; then
+                    # Swap
+                    indices[$j]=$idx2
+                    indices[$((j + 1))]=$idx1
+                fi
+            done
+        done
+        
+        # Build sorted arrays
+        DETECTED_PYTHONS=()
+        DETECTED_PYTHON_INFO=()
+        for idx in "${indices[@]}"; do
+            DETECTED_PYTHONS+=("${pythons[$idx]}")
+            DETECTED_PYTHON_INFO+=("${python_info[$idx]}")
+        done
+    else
+        DETECTED_PYTHONS=()
+        DETECTED_PYTHON_INFO=()
+    fi
 }
 
-# Check if a Python version meets minimum requirements
+# Check if a Python version meets minimum requirements (Python 3.9+)
 check_python_version() {
     local py_path="$1"
+    
+    # Must be Python 3
+    if ! is_python3 "$py_path"; then
+        return 1
+    fi
+    
     local version
     version=$($py_path -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null) || return 1
     
@@ -411,59 +471,76 @@ check_python_version() {
 select_python_version() {
     detect_python_versions
     
-    # Filter to only valid versions (3.9+)
+    # Filter to only valid versions (Python 3.9+)
     local -a valid_pythons=()
     local -a valid_info=()
     
-    for i in "${!DETECTED_PYTHONS[@]}"; do
-        if check_python_version "${DETECTED_PYTHONS[$i]}"; then
-            valid_pythons+=("${DETECTED_PYTHONS[$i]}")
-            valid_info+=("${DETECTED_PYTHON_INFO[$i]}")
-        fi
-    done
+    if [ ${#DETECTED_PYTHONS[@]} -gt 0 ]; then
+        for i in "${!DETECTED_PYTHONS[@]}"; do
+            if check_python_version "${DETECTED_PYTHONS[$i]}"; then
+                valid_pythons+=("${DETECTED_PYTHONS[$i]}")
+                valid_info+=("${DETECTED_PYTHON_INFO[$i]}")
+            fi
+        done
+    fi
     
     if [ ${#valid_pythons[@]} -eq 0 ]; then
-        print_error "No compatible Python version found (3.9+ required)"
-        print_info "Install Python 3.9 or higher and try again:"
-        print_info "  macOS: brew install python@3.11"
-        print_info "  Linux: sudo apt install python3.11"
+        print_error "No compatible Python 3 version found (Python 3.9+ required)"
+        print_warning "Note: Python 2 is NOT supported"
+        echo ""
+        print_info "Install Python 3.9 or higher:"
+        print_info "  macOS:  brew install python@3.12"
+        print_info "  Ubuntu: sudo apt install python3.12"
+        print_info "  Fedora: sudo dnf install python3.12"
         print_info "  Or visit: https://www.python.org/downloads/"
         exit 1
     fi
     
-    # If only one valid Python, use it
-    if [ ${#valid_pythons[@]} -eq 1 ]; then
-        SELECTED_PYTHON="${valid_pythons[0]}"
-        print_success "Using ${valid_info[0]}"
-        return
-    fi
-    
-    # Non-interactive mode: use first valid Python
-    if [ ! -t 0 ] || [ "${FLYBROWSER_ACCEPT_DEFAULTS:-}" = "true" ]; then
-        SELECTED_PYTHON="${valid_pythons[0]}"
-        print_info "Auto-selected: ${valid_info[0]}"
-        return
-    fi
-    
-    # Interactive mode: let user choose
+    # Show detected Python versions (first one is latest/recommended)
     echo ""
-    print_msg "$CYAN" "$EMOJI_PACKAGE Available Python versions:"
+    print_msg "$CYAN" "$EMOJI_PACKAGE Detected Python 3 installations:"
     echo ""
     
     for i in "${!valid_info[@]}"; do
         local num=$((i + 1))
         if [ $i -eq 0 ]; then
-            echo -e "  ${GREEN}$num)${NC} ${valid_info[$i]} ${GREEN}(recommended)${NC}"
+            echo -e "  ${GREEN}${BOLD}$num)${NC} ${valid_info[$i]} ${GREEN}← latest (recommended)${NC}"
         else
-            echo "  $num) ${valid_info[$i]}"
+            echo -e "  ${DIM}$num)${NC} ${valid_info[$i]}"
         fi
     done
     echo ""
     
+    # Non-interactive mode: use latest (first) Python
+    if [ ! -t 0 ] || [ "${FLYBROWSER_ACCEPT_DEFAULTS:-}" = "true" ]; then
+        SELECTED_PYTHON="${valid_pythons[0]}"
+        print_info "Auto-selected latest: ${valid_info[0]}"
+        return
+    fi
+    
+    # If only one valid Python, confirm and use it
+    if [ ${#valid_pythons[@]} -eq 1 ]; then
+        echo -e "${CYAN}Only one compatible Python found.${NC}"
+        read -p "Use ${valid_info[0]}? [Y/n] " -n 1 -r confirm
+        echo
+        if [[ -z "$confirm" || "$confirm" =~ ^[Yy]$ ]]; then
+            SELECTED_PYTHON="${valid_pythons[0]}"
+            print_success "Using ${valid_info[0]}"
+            return
+        else
+            print_error "Installation cancelled. Please install a compatible Python 3.9+ version."
+            exit 1
+        fi
+    fi
+    
+    # Multiple versions: ask user to select or confirm default
+    echo -e "${CYAN}Press Enter to use the recommended version, or enter a number to select:${NC}"
+    echo ""
+    
     while true; do
-        read -p "Select Python version [1-${#valid_pythons[@]}] (default: 1): " choice
+        read -p "Select Python version [1-${#valid_pythons[@]}] (Enter = 1): " choice
         
-        # Default to first option
+        # Default to first option (latest)
         if [ -z "$choice" ]; then
             choice=1
         fi
@@ -472,10 +549,11 @@ select_python_version() {
         if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#valid_pythons[@]} ]; then
             local idx=$((choice - 1))
             SELECTED_PYTHON="${valid_pythons[$idx]}"
+            echo ""
             print_success "Selected: ${valid_info[$idx]}"
             return
         else
-            print_warning "Please enter a number between 1 and ${#valid_pythons[@]}"
+            print_warning "Invalid choice. Enter a number between 1 and ${#valid_pythons[@]}"
         fi
     done
 }
