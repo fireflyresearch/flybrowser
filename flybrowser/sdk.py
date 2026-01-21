@@ -1086,7 +1086,7 @@ class FlyBrowser:
             
             return web.FileResponse(file_path)
         
-        app.router.add_get('/{stream_id}/{filename}', serve_stream_file)
+        app.router.add_get('/streams/{stream_id}/{filename}', serve_stream_file)
         
         # Find available port
         import socket

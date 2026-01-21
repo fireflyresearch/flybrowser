@@ -210,16 +210,16 @@ class StreamingSession:
         self.output_dir = Path(output_dir)
         self.base_url = base_url or "http://localhost:8000"
         
-        # Create stream directory
-        self.stream_dir = self.output_dir / session_id
-        self.stream_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Stream info
+        # Stream info (create first to get stream_id)
         self.info = StreamInfo(
             session_id=session_id,
             protocol=config.protocol,
             config=config,
         )
+        
+        # Create stream directory using stream_id (not session_id)
+        self.stream_dir = self.output_dir / self.info.stream_id
+        self.stream_dir.mkdir(parents=True, exist_ok=True)
         
         # FFmpeg recorder
         self._recorder: Optional[FFmpegRecorder] = None
