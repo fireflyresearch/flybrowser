@@ -219,20 +219,43 @@ print_step() { print_msg "$CYAN" "$EMOJI_ARROW $1"; }
 spinner() {
     local pid="$1"
     local delay=0.1
-    local spinstr='|/-\'
+    local spinstr='|/-\\'
     while kill -0 "$pid" 2>/dev/null; do
         # Check if we've been interrupted
         if [ "$INTERRUPTED" = true ]; then
-            printf "    \b\b\b\b"
+            printf "    \\b\\b\\b\\b"
             return
         fi
         local temp=${spinstr#?}
         printf " [%c]  " "$spinstr"
         spinstr=$temp${spinstr%"$temp"}
         sleep "$delay" || return  # sleep can be interrupted
-        printf "\b\b\b\b\b\b"
+        printf "\\b\\b\\b\\b\\b\\b"
     done
-    printf "    \b\b\b\b"
+    printf "    \\b\\b\\b\\b"
+}
+
+# Prompt user for yes/no question
+prompt_bool() {
+    local message="$1"
+    local default="${2:-false}"  # Default to false if not specified
+    local default_str="y/N"
+    
+    if [ "$default" = "true" ]; then
+        default_str="Y/n"
+    fi
+    
+    read -p "$message [$default_str] " -n 1 -r
+    echo
+    
+    # If empty, use default
+    if [ -z "$REPLY" ]; then
+        [ "$default" = "true" ]
+        return $?
+    fi
+    
+    # Check if reply is yes
+    [[ $REPLY =~ ^[Yy]$ ]]
 }
 
 # Detect installation context (source vs remote)
@@ -654,6 +677,66 @@ install_uv_if_requested() {
     fi
 }
 
+# Check for ffmpeg (optional but recommended for recording/streaming)
+check_ffmpeg() {
+    local os
+    os=$(detect_os)
+    
+    if command -v ffmpeg &> /dev/null; then
+        local ffmpeg_version
+        ffmpeg_version=$(ffmpeg -version 2>/dev/null | head -n1 | cut -d' ' -f3)
+        print_success "ffmpeg $ffmpeg_version (video recording/streaming enabled)"
+        return
+    fi
+    
+    print_warning "ffmpeg not found (optional, needed for video recording/streaming)"
+    
+    # Only offer to install in interactive mode
+    if [ -t 0 ] && [ "${FLYBROWSER_ACCEPT_DEFAULTS:-}" != "true" ]; then
+        echo ""
+        print_info "ffmpeg enables advanced video recording and live streaming features"
+        read -p "Would you like to install ffmpeg? [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            print_info "Installing ffmpeg..."
+            case "$os" in
+                darwin)
+                    if command -v brew &> /dev/null; then
+                        brew install ffmpeg
+                        print_success "ffmpeg installed via Homebrew"
+                    else
+                        print_error "Homebrew not found. Install Homebrew first or manually install ffmpeg"
+                        print_info "Visit: https://brew.sh"
+                    fi
+                    ;;
+                linux)
+                    if command -v apt-get &> /dev/null; then
+                        sudo apt-get update && sudo apt-get install -y ffmpeg
+                        print_success "ffmpeg installed via apt"
+                    elif command -v yum &> /dev/null; then
+                        sudo yum install -y ffmpeg
+                        print_success "ffmpeg installed via yum"
+                    elif command -v dnf &> /dev/null; then
+                        sudo dnf install -y ffmpeg
+                        print_success "ffmpeg installed via dnf"
+                    else
+                        print_error "No supported package manager found"
+                        print_info "Manually install ffmpeg: https://ffmpeg.org/download.html"
+                    fi
+                    ;;
+                *)
+                    print_error "Automatic ffmpeg installation not supported on this OS"
+                    print_info "Visit: https://ffmpeg.org/download.html"
+                    ;;
+            esac
+        else
+            print_info "Skipping ffmpeg installation (can be installed later)"
+        fi
+    else
+        print_info "Install ffmpeg later for video recording/streaming features"
+    fi
+}
+
 # Print banner - uses canonical banner from flybrowser/banner.txt
 print_banner() {
     echo ""
@@ -707,6 +790,9 @@ check_requirements() {
         print_info "uv not found (using pip)"
     fi
 
+    # ffmpeg check (for video recording/streaming features)
+    check_ffmpeg
+
     echo ""
     
     if [ "$all_ok" = false ]; then
@@ -724,6 +810,10 @@ create_venv() {
     print_step "Creating virtual environment with $SELECTED_PYTHON..."
     
     mkdir -p "$DATA_DIR"
+    
+    # Create recordings directory for video recording/streaming features
+    mkdir -p "$DATA_DIR/recordings"
+    chmod 755 "$DATA_DIR/recordings"
     
     if [ -d "$VENV_DIR" ]; then
         print_warning "Virtual environment exists, recreating..."
@@ -976,6 +1066,59 @@ EOF
 
     print_success "Launchd service installed"
     print_info "Start with: launchctl load $plist_path"
+}
+
+# Ask about service installation (smart detection)
+ask_about_service() {
+    # Skip if already specified via flag
+    if [ "$WITH_SERVICE" = true ]; then
+        return
+    fi
+    
+    # Skip if non-interactive
+    if [ ! -t 0 ] || [ "${FLYBROWSER_ACCEPT_DEFAULTS:-}" = "true" ]; then
+        return
+    fi
+    
+    # Skip if not in standalone mode (or mode not configured yet)
+    # For now, we'll ask during installation
+    
+    local os=$(detect_os)
+    
+    # Check if service manager is available
+    local service_available=false
+    local service_type=""
+    
+    case "$os" in
+        linux)
+            if command -v systemctl &> /dev/null; then
+                service_available=true
+                service_type="systemd"
+            fi
+            ;;
+        darwin)
+            if [ -d "$HOME/Library/LaunchAgents" ]; then
+                service_available=true
+                service_type="launchd"
+            fi
+            ;;
+    esac
+    
+    # Only ask if service manager is available
+    if [ "$service_available" = true ]; then
+        echo ""
+        print_step "Service Installation (Optional)"
+        echo "FlyBrowser can be installed as a system service ($service_type)."
+        echo "This will auto-start the API server on boot."
+        echo ""
+        
+        if prompt_bool "Install as a system service?" false; then
+            WITH_SERVICE=true
+            print_success "Service installation enabled"
+        else
+            print_info "Skipping service installation (can be added later)"
+        fi
+    fi
 }
 
 # Install system service
@@ -1282,74 +1425,159 @@ print_completion() {
     python_version=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null) || python_version="unknown"
     
     # Check for Playwright browsers
-    local playwright_status="not checked"
+    local playwright_status="not installed"
     if python -c "from playwright.sync_api import sync_playwright" 2>/dev/null; then
-        playwright_status="installed"
-    else
-        playwright_status="not installed"
+        playwright_status="✓ installed"
+    fi
+    
+    # Check for ffmpeg (streaming/recording)
+    local ffmpeg_status="not installed"
+    if command -v ffmpeg &> /dev/null; then
+        ffmpeg_status="✓ installed"
     fi
     
     # Check for config file
     local config_status="not configured"
     if [ -f "$HOME/.flybrowser/.env" ] || [ -f ".env" ]; then
-        config_status="configured"
+        config_status="✓ configured"
+    fi
+    
+    # Check for service installation
+    local service_status="not installed"
+    local os=$(detect_os)
+    if [ "$os" = "darwin" ] && [ -f "$HOME/Library/LaunchAgents/dev.flybrowser.plist" ]; then
+        service_status="✓ installed (launchd)"
+    elif [ "$os" = "linux" ] && [ -f "/etc/systemd/system/flybrowser.service" ]; then
+        service_status="✓ installed (systemd)"
     fi
     
     echo ""
-    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║${NC}  ${BOLD}$EMOJI_ROCKET FlyBrowser Installation Complete!${NC}              ${GREEN}║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}$EMOJI_ROCKET FlyBrowser Installation Complete!${NC}                         ${GREEN}║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
     # Installation Summary
-    print_msg "$BOLD" "$EMOJI_PACKAGE Installation Summary:"
-    echo -e "  ${CYAN}FlyBrowser Version:${NC}  $version"
-    echo -e "  ${CYAN}Python Version:${NC}      $python_version"
-    echo -e "  ${CYAN}Virtual Environment:${NC} $VENV_DIR"
-    echo -e "  ${CYAN}CLI Commands:${NC}        $INSTALL_DIR"
+    print_msg "$BOLD" "📦 Installation Summary:"
+    echo -e "  ${CYAN}Version:${NC}             FlyBrowser $version (Python $python_version)"
+    echo -e "  ${CYAN}Install Mode:${NC}        $INSTALL_MODE"
     echo -e "  ${CYAN}Package Manager:${NC}     $PACKAGE_MANAGER"
     echo -e "  ${CYAN}Playwright:${NC}          $playwright_status"
+    echo -e "  ${CYAN}FFmpeg:${NC}              $ffmpeg_status"
     echo -e "  ${CYAN}Configuration:${NC}       $config_status"
+    echo -e "  ${CYAN}System Service:${NC}      $service_status"
     echo ""
     
-    # Installed Commands
-    print_msg "$BOLD" "$EMOJI_GEAR Installed Commands:"
-    echo -e "  ${GREEN}flybrowser${NC}              Main CLI (recommended)"
-    echo -e "  ${DIM}flybrowser-setup${NC}        Setup and configuration"
-    echo -e "  ${DIM}flybrowser-serve${NC}        API server"
-    echo -e "  ${DIM}flybrowser-cluster${NC}      Cluster management"
-    echo -e "  ${DIM}flybrowser-admin${NC}        Administration"
+    # Installed Folders
+    print_msg "$BOLD" "📁 Installed Folders:"
+    echo -e "  ${CYAN}$VENV_DIR${NC}"
+    echo -e "    ${DIM}├─ Python virtual environment${NC}"
+    echo -e "  ${CYAN}$DATA_DIR${NC}"
+    echo -e "    ${DIM}├─ config/        Configuration files (.env)${NC}"
+    echo -e "    ${DIM}├─ logs/          Application logs${NC}"
+    echo -e "    ${DIM}├─ recordings/    Video recordings & streams${NC}"
+    echo -e "    ${DIM}└─ sessions/      Browser session data${NC}"
     echo ""
     
-    # Quick Start
-    print_msg "$BOLD" "$EMOJI_ARROW Quick Start:"
-    echo "  flybrowser                    # Launch interactive REPL"
-    echo "  flybrowser setup configure    # Run configuration wizard"
-    echo "  flybrowser serve              # Start the API server"
-    echo "  flybrowser doctor             # Check installation health"
+    # Key Features
+    print_msg "$BOLD" "✨ Key Features Installed:"
+    echo -e "  ${GREEN}✓${NC} Natural Language Control     ${DIM}(LLM-powered agents)${NC}"
+    echo -e "  ${GREEN}✓${NC} Live Streaming & Recording   ${DIM}(HLS/DASH/RTMP, H.264/H.265)${NC}"
+    echo -e "  ${GREEN}✓${NC} Smart Validators             ${DIM}(Auto-fix LLM responses)${NC}"
+    echo -e "  ${GREEN}✓${NC} PII Protection               ${DIM}(Automatic redaction)${NC}"
+    echo -e "  ${GREEN}✓${NC} Multi-Deployment             ${DIM}(Embedded/Standalone/Cluster)${NC}"
+    echo -e "  ${GREEN}✓${NC} Hardware Acceleration        ${DIM}(NVENC/VideoToolbox/QSV)${NC}"
+    echo -e "  ${GREEN}✓${NC} Built-in Observability       ${DIM}(Metrics, logs, traces)${NC}"
     echo ""
     
-    # Next Steps based on status
-    print_msg "$BOLD" "$EMOJI_INFO Next Steps:"
+    # CLI Commands
+    print_msg "$BOLD" "⚙️  Available Commands:"
+    echo -e "  ${GREEN}${BOLD}Main Commands:${NC}"
+    echo -e "    ${CYAN}flybrowser${NC}                    Interactive REPL"
+    echo -e "    ${CYAN}flybrowser version${NC}            Show version info"
+    echo -e "    ${CYAN}flybrowser doctor${NC}             Diagnose issues"
+    echo -e "    ${CYAN}flybrowser repl${NC}               Launch REPL with options"
+    echo ""
+    echo -e "  ${GREEN}${BOLD}Service & Setup:${NC}"
+    echo -e "    ${CYAN}flybrowser setup configure${NC}    Configuration wizard"
+    echo -e "    ${CYAN}flybrowser setup browsers${NC}     Install browsers"
+    echo -e "    ${CYAN}flybrowser setup jupyter${NC}      Jupyter integration"
+    echo -e "    ${CYAN}flybrowser serve${NC}              Start API server"
+    echo ""
+    echo -e "  ${GREEN}${BOLD}Streaming & Recording:${NC}"
+    echo -e "    ${CYAN}flybrowser stream start${NC}       Start live stream"
+    echo -e "    ${CYAN}flybrowser stream stop${NC}        Stop stream"
+    echo -e "    ${CYAN}flybrowser stream status${NC}      Stream status"
+    echo -e "    ${CYAN}flybrowser stream url${NC}         Get stream URL"
+    echo -e "    ${CYAN}flybrowser recordings list${NC}    List recordings"
+    echo -e "    ${CYAN}flybrowser recordings download${NC} Download recording"
+    echo ""
+    echo -e "  ${GREEN}${BOLD}Cluster & Admin:${NC}"
+    echo -e "    ${CYAN}flybrowser cluster status${NC}     Cluster status"
+    echo -e "    ${CYAN}flybrowser cluster nodes${NC}      List nodes"
+    echo -e "    ${CYAN}flybrowser admin sessions${NC}     Manage sessions"
+    echo -e "    ${CYAN}flybrowser uninstall${NC}          Uninstall"
+    echo ""
+    
+    # Quick Start Examples
+    print_msg "$BOLD" "🚀 Quick Start Examples:"
+    echo ""
+    echo -e "  ${BOLD}1. Embedded Mode (Python SDK):${NC}"
+    echo -e "    ${DIM}from flybrowser import FlyBrowser${NC}"
+    echo -e "    ${DIM}browser = FlyBrowser()${NC}"
+    echo -e "    ${DIM}await browser.goto('https://example.com')${NC}"
+    echo ""
+    echo -e "  ${BOLD}2. Standalone Mode (API Server):${NC}"
+    echo -e "    ${CYAN}flybrowser serve${NC}                      ${DIM}# Start server${NC}"
+    echo -e "    ${DIM}curl http://localhost:8000/sessions       # Create session${NC}"
+    echo ""
+    echo -e "  ${BOLD}3. Cluster Mode (Multi-Node):${NC}"
+    echo -e "    ${CYAN}flybrowser setup configure${NC}            ${DIM}# Select cluster mode${NC}"
+    echo -e "    ${CYAN}flybrowser cluster start coordinator${NC}  ${DIM}# On main node${NC}"
+    echo -e "    ${CYAN}flybrowser cluster start worker${NC}       ${DIM}# On worker nodes${NC}"
+    echo ""
+    echo -e "  ${BOLD}4. Live Streaming:${NC}"
+    echo -e "    ${CYAN}flybrowser stream start SESSION_ID${NC}    ${DIM}# Start HLS stream${NC}"
+    echo -e "    ${CYAN}flybrowser stream url SESSION_ID${NC}      ${DIM}# Get stream URL${NC}"
+    echo ""
+    
+    # Next Steps
+    print_msg "$BOLD" "📋 Next Steps:"
     if [ "$config_status" = "not configured" ]; then
         echo -e "  ${YELLOW}1.${NC} Configure FlyBrowser: ${CYAN}flybrowser setup configure${NC}"
-        echo -e "  ${YELLOW}2.${NC} Set up LLM API keys (OpenAI, Anthropic, etc.)"
-        echo -e "  ${YELLOW}3.${NC} Start using: ${CYAN}flybrowser${NC}"
+        echo -e "     ${DIM}Set up LLM providers (OpenAI, Anthropic, Gemini, Ollama)${NC}"
+        echo -e "     ${DIM}Configure deployment mode (standalone/cluster)${NC}"
+        echo -e "     ${DIM}Set browser pool settings${NC}"
+        echo ""
+        echo -e "  ${YELLOW}2.${NC} Start using FlyBrowser:"
+        echo -e "     ${DIM}Interactive REPL:${NC}  ${CYAN}flybrowser${NC}"
+        echo -e "     ${DIM}API Server:${NC}       ${CYAN}flybrowser serve${NC}"
+        echo -e "     ${DIM}Python SDK:${NC}       ${CYAN}from flybrowser import FlyBrowser${NC}"
+        echo ""
+        echo -e "  ${YELLOW}3.${NC} Verify installation: ${CYAN}flybrowser doctor${NC}"
     else
-        echo -e "  ${YELLOW}1.${NC} Start using: ${CYAN}flybrowser${NC}"
+        echo -e "  ${YELLOW}1.${NC} Start using FlyBrowser: ${CYAN}flybrowser${NC}"
         echo -e "  ${YELLOW}2.${NC} Run diagnostics: ${CYAN}flybrowser doctor${NC}"
+        echo -e "  ${YELLOW}3.${NC} Start API server: ${CYAN}flybrowser serve${NC}"
+    fi
+    
+    if [ "$service_status" = "not installed" ] && [ "$WITH_SERVICE" = false ]; then
+        echo ""
+        echo -e "  ${DIM}Tip: Install as system service for auto-start on boot${NC}"
+        echo -e "       ${CYAN}./install.sh --with-service${NC}"
     fi
     echo ""
     
     # Resources
-    print_msg "$BOLD" "Resources:"
+    print_msg "$BOLD" "📚 Resources:"
     echo "  Documentation: https://flybrowser.dev/docs"
     echo "  GitHub:        https://github.com/$GITHUB_REPO"
     echo "  Discord:       https://discord.gg/flybrowser"
+    echo "  Issues:        https://github.com/$GITHUB_REPO/issues"
     echo ""
     
     # Uninstall info
-    print_msg "$DIM" "To uninstall: ./uninstall.sh or flybrowser uninstall"
+    print_msg "$DIM" "To uninstall: flybrowser uninstall"
     echo ""
 }
 
@@ -1415,6 +1643,9 @@ main() {
     
     # Phase 3.5: Optional Jupyter kernel setup
     setup_jupyter_kernel
+    
+    # Phase 3.6: Smart service installation prompt
+    ask_about_service
 
     # Phase 4: Service installation
     install_service
