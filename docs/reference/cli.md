@@ -190,6 +190,274 @@ flybrowser-cluster sessions --endpoint http://localhost:8001
 # sess_def456       node2    active   2024-01-15 11:00
 ```
 
+## flybrowser stream
+
+Manage live browser session streams.
+
+### Synopsis
+
+```bash path=null start=null
+flybrowser stream <COMMAND> [OPTIONS]
+```
+
+### Commands
+
+#### stream start
+
+Start a live stream for a browser session.
+
+```bash path=null start=null
+flybrowser stream start <SESSION_ID> [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `SESSION_ID` | Session identifier to stream |
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--protocol` | `hls` | Streaming protocol: `hls`, `dash`, `rtmp` |
+| `--quality` | `medium` | Quality profile: `low_bandwidth`, `medium`, `high` |
+| `--codec` | `h264` | Video codec: `h264`, `h265`, `vp9` |
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+
+**Example**:
+```bash path=null start=null
+# Start HLS stream with medium quality
+flybrowser stream start sess_abc123 --protocol hls --quality medium
+
+# Start high-quality H.265 stream
+flybrowser stream start sess_abc123 --protocol hls --quality high --codec h265
+
+# Stream to custom endpoint
+flybrowser stream start sess_abc123 --endpoint http://cluster.example.com:8000
+```
+
+#### stream stop
+
+Stop an active stream.
+
+```bash path=null start=null
+flybrowser stream stop <SESSION_ID> [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `SESSION_ID` | Session identifier |
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+
+**Example**:
+```bash path=null start=null
+flybrowser stream stop sess_abc123
+
+# Output:
+# {
+#   "stream_id": "stream_abc123",
+#   "success": true,
+#   "statistics": {
+#     "frames_sent": 1500,
+#     "bytes_sent": 15728640,
+#     "duration_seconds": 50,
+#     "avg_fps": 30
+#   }
+# }
+```
+
+#### stream status
+
+Get real-time status and metrics for an active stream.
+
+```bash path=null start=null
+flybrowser stream status <SESSION_ID> [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `SESSION_ID` | Session identifier |
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+
+**Example**:
+```bash path=null start=null
+flybrowser stream status sess_abc123
+
+# Output:
+# {
+#   "stream_id": "stream_abc123",
+#   "active": true,
+#   "health": "healthy",
+#   "current_fps": 30,
+#   "current_bitrate": 1500,
+#   "frames_sent": 450,
+#   "bytes_sent": 4718592,
+#   "viewer_count": 2,
+#   "buffer_health": 95
+# }
+```
+
+#### stream url
+
+Get the stream URL for viewing.
+
+```bash path=null start=null
+flybrowser stream url <SESSION_ID> [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `SESSION_ID` | Session identifier |
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+
+**Example**:
+```bash path=null start=null
+flybrowser stream url sess_abc123
+
+# Output:
+# http://localhost:8000/streams/stream_abc123/playlist.m3u8
+
+# Use with video player:
+vlc $(flybrowser stream url sess_abc123)
+```
+
+## flybrowser recordings
+
+Manage session recordings.
+
+### Synopsis
+
+```bash path=null start=null
+flybrowser recordings <COMMAND> [OPTIONS]
+```
+
+### Commands
+
+#### recordings list
+
+List available recordings.
+
+```bash path=null start=null
+flybrowser recordings list [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--session-id` | (none) | Filter by session ID |
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+
+**Example**:
+```bash path=null start=null
+# List all recordings
+flybrowser recordings list
+
+# List recordings for specific session
+flybrowser recordings list --session-id sess_abc123
+
+# Output:
+# {
+#   "recordings": [
+#     {
+#       "id": "rec_xyz789",
+#       "session_id": "sess_abc123",
+#       "created_at": "2026-01-21T10:30:00Z",
+#       "duration_seconds": 120,
+#       "file_size_mb": 24.5,
+#       "codec": "h264",
+#       "quality": "medium"
+#     }
+#   ],
+#   "total": 1
+# }
+```
+
+#### recordings download
+
+Download a recording.
+
+```bash path=null start=null
+flybrowser recordings download <RECORDING_ID> [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `RECORDING_ID` | Recording identifier |
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--output`, `-o` | `recording.mp4` | Output file path |
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+
+**Example**:
+```bash path=null start=null
+# Download with default name
+flybrowser recordings download rec_xyz789
+
+# Download with custom name
+flybrowser recordings download rec_xyz789 -o my_session.mp4
+
+# Output:
+# Downloading to my_session.mp4...
+# Progress: 100.0%
+# Downloaded successfully to my_session.mp4
+```
+
+#### recordings delete
+
+Delete a recording.
+
+```bash path=null start=null
+flybrowser recordings delete <RECORDING_ID> [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `RECORDING_ID` | Recording identifier |
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+
+**Example**:
+```bash path=null start=null
+flybrowser recordings delete rec_xyz789
+# Recording rec_xyz789 deleted successfully
+```
+
+#### recordings clean
+
+Clean old recordings based on age.
+
+```bash path=null start=null
+flybrowser recordings clean [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--older-than` | `7d` | Delete recordings older than (e.g., `7d`, `30d`) |
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+
+**Example**:
+```bash path=null start=null
+# Clean recordings older than 7 days
+flybrowser recordings clean --older-than 7d
+
+# Clean recordings older than 30 days
+flybrowser recordings clean --older-than 30d
+
+# Output:
+# Deleted: rec_abc123 (created 2026-01-01T10:00:00Z)
+# Deleted: rec_def456 (created 2026-01-05T15:30:00Z)
+# 
+# Cleaned 2 recordings older than 7 days
+```
+
 ## flybrowser-admin
 
 Administrative operations for session and node management.
