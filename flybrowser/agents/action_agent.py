@@ -242,7 +242,15 @@ class ActionAgent(BaseAgent):
 
         except Exception as e:
             logger.error(f"Action execution failed: {self.mask_for_log(str(e))}")
-            raise ActionError(f"Failed to execute action '{self.mask_for_log(instruction)}': {e}") from e
+            # Return error dict instead of raising, for better error handling
+            return {
+                "success": False,
+                "steps_completed": 0,
+                "total_steps": 0,
+                "plan": [],
+                "error": str(e),
+                "details": {"exception_type": type(e).__name__},
+            }
 
     async def _plan_actions(
         self, instruction: str, use_vision: bool = True

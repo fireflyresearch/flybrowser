@@ -88,6 +88,8 @@ class FlyBrowser:
         recording_enabled: bool = False,
         pii_masking_enabled: bool = True,
         timeout: float = 30.0,
+        log_level: str = "INFO",
+        pretty_logs: bool = True,
         **kwargs: Any,
     ) -> None:
         """
@@ -108,6 +110,8 @@ class FlyBrowser:
             recording_enabled: Enable session recording (default: False)
             pii_masking_enabled: Enable PII masking (default: True)
             timeout: Request timeout in seconds for server mode (default: 30.0)
+            log_level: Logging level - DEBUG, INFO, WARNING, ERROR (default: INFO)
+            pretty_logs: Use human-readable colored logs instead of JSON (default: True)
             **kwargs: Additional configuration options
 
         Example - Embedded Mode:
@@ -138,6 +142,11 @@ class FlyBrowser:
         self._pii_masking_enabled = pii_masking_enabled
         self._timeout = timeout
         self._kwargs = kwargs
+
+        # Configure logging
+        from flybrowser.utils.logger import configure_logging, LogFormat
+        log_format = LogFormat.HUMAN if pretty_logs else LogFormat.JSON
+        configure_logging(level=log_level, log_format=log_format)
 
         # Mode-specific components (initialized in start())
         self._client = None  # HTTP client for server mode
@@ -250,19 +259,19 @@ class FlyBrowser:
             pii_handler=self.pii_handler
         )
         self.action_agent = ActionAgent(
-            self.browser_manager.page, self.element_detector, self.llm,
+            self.page_controller, self.element_detector, self.llm,
             pii_handler=self.pii_handler
         )
         self.navigation_agent = NavigationAgent(
-            self.browser_manager.page, self.page_controller, self.llm,
+            self.page_controller, self.element_detector, self.llm,
             pii_handler=self.pii_handler
         )
         self.workflow_agent = WorkflowAgent(
-            self.browser_manager.page, self.element_detector, self.llm,
+            self.page_controller, self.element_detector, self.llm,
             pii_handler=self.pii_handler
         )
         self.monitoring_agent = MonitoringAgent(
-            self.browser_manager.page, self.llm,
+            self.page_controller, self.element_detector, self.llm,
             pii_handler=self.pii_handler
         )
 
@@ -378,7 +387,14 @@ class FlyBrowser:
             result = await self._client.extract(self._session_id, query, schema)
             return result.get("data", result)
         else:
-            return await self.extraction_agent.execute(query, use_vision=use_vision, schema=schema)
+            result = await self.extraction_agent.execute(query, use_vision=use_vision, schema=schema)
+            # ExtractionAgent now returns {success, data, query} or error dict
+            # For backward compatibility, return the data directly if successful
+            if result.get("success"):
+                return result.get("data", result)
+            else:
+                # Return the full error dict so users can check success/error
+                return result
 
     async def act(self, instruction: str, use_vision: bool = True) -> Dict[str, Any]:
         """
@@ -409,13 +425,8 @@ class FlyBrowser:
 
         # Embedded mode: Use ActionAgent for intelligent action execution
         result = await self.action_agent.execute(instruction, use_vision=use_vision)
-        return {
-            "success": result.success,
-            "steps_completed": result.steps_completed,
-            "total_steps": result.total_steps,
-            "error": result.error,
-            "details": result.details,
-        }
+        # ActionAgent.execute() already returns a dict
+        return result
 
     async def screenshot(self, full_page: bool = False, mask_pii: bool = True) -> Dict[str, Any]:
         """
@@ -642,15 +653,8 @@ class FlyBrowser:
             return response or {}
 
         # Embedded mode: Use WorkflowAgent
-        result = await self.workflow_agent.execute(workflow_definition, variables=variables)
-        return {
-            "success": result.success,
-            "steps_completed": result.steps_completed,
-            "total_steps": result.total_steps,
-            "error": result.error,
-            "step_results": result.step_results,
-            "variables": result.variables,
-        }
+        # WorkflowAgent.execute() now returns a dict directly
+        return await self.workflow_agent.execute(workflow_definition, variables=variables)
 
     async def monitor(
         self,
@@ -690,16 +694,10 @@ class FlyBrowser:
             return response or {}
 
         # Embedded mode: Use MonitoringAgent
-        result = await self.monitoring_agent.execute(
-            condition, timeout=timeout, poll_interval=poll_interval
+        # MonitoringAgent.execute() now returns a dict directly
+        return await self.monitoring_agent.execute(
+            condition, max_duration=timeout, poll_interval=poll_interval
         )
-        return {
-            "success": result.success,
-            "condition_met": result.condition_met,
-            "elapsed_time": result.elapsed_time,
-            "error": result.error,
-            "details": result.details,
-        }
 
     # Utility methods
     @property

@@ -185,7 +185,7 @@ class ExtractionAgent(BaseAgent):
                     temperature=0.3,  # Lower temperature for more consistent structured output
                 )
                 logger.info("Data extracted successfully (structured)")
-                return result
+                return {"success": True, "data": result, "query": query}
 
             # Use vision-based extraction if enabled
             if use_vision:
@@ -210,9 +210,16 @@ class ExtractionAgent(BaseAgent):
                 result = {"extracted_text": response.content}
 
             logger.info("Data extracted successfully")
-            return result
+            return {"success": True, "data": result, "query": query}
 
         except Exception as e:
             logger.error(f"Extraction failed: {self.mask_for_log(str(e))}")
-            raise ExtractionError(f"Failed to extract data for query '{self.mask_for_log(query)}': {e}") from e
+            # Return error dict instead of raising, for better error handling
+            return {
+                "success": False,
+                "data": None,
+                "error": str(e),
+                "query": query,
+                "exception_type": type(e).__name__,
+            }
 

@@ -280,7 +280,15 @@ class MonitoringAgent(BaseAgent):
 
         except Exception as e:
             logger.error(f"Monitoring failed: {self.mask_for_log(str(e))}")
-            raise MonitoringError(f"Failed to execute monitoring: {e}") from e
+            # Return error dict instead of raising, for better error handling
+            return {
+                "success": False,
+                "session_id": None,
+                "changes_detected": [],
+                "monitoring_duration": 0.0,
+                "error": str(e),
+                "exception_type": type(e).__name__,
+            }
 
     async def _parse_monitoring_instruction(
         self, instruction: str

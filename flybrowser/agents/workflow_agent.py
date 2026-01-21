@@ -291,7 +291,17 @@ class WorkflowAgent(BaseAgent):
 
         except Exception as e:
             logger.error(f"Workflow execution failed: {self.mask_for_log(str(e))}")
-            raise WorkflowError(f"Failed to execute workflow: {e}") from e
+            # Return error dict instead of raising, for better error handling
+            return {
+                "success": False,
+                "steps_completed": 0,
+                "total_steps": 0,
+                "duration": time.time() - start_time,
+                "variables": {},
+                "step_results": [],
+                "error": str(e),
+                "exception_type": type(e).__name__,
+            }
 
     async def _plan_workflow(
         self,

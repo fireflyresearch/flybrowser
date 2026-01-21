@@ -231,7 +231,16 @@ class NavigationAgent(BaseAgent):
 
         except Exception as e:
             logger.error(f"Navigation failed: {self.mask_for_log(str(e))}")
-            raise NavigationError(f"Failed to execute navigation '{self.mask_for_log(command)}': {e}") from e
+            # Return error dict instead of raising, for better error handling
+            return {
+                "success": False,
+                "url": "",
+                "title": "",
+                "navigation_type": "unknown",
+                "error": str(e),
+                "exception_type": type(e).__name__,
+                "details": {},
+            }
 
     async def _plan_navigation(
         self, command: str, use_vision: bool = True
