@@ -1079,13 +1079,10 @@ class FlyBrowser:
         from aiohttp import web
         import asyncio
         
-        app = web.Application()
-        
         # Request logging middleware
         @web.middleware
         async def log_requests(request, handler):
             logger.info(f"HTTP Request: {request.method} {request.path}")
-            logger.info(f"Available routes: {[str(route) for route in app.router.routes()]}")
             try:
                 response = await handler(request)
                 logger.info(f"Response status: {response.status}")
@@ -1093,8 +1090,12 @@ class FlyBrowser:
             except web.HTTPException as e:
                 logger.warning(f"HTTP Exception: {e.status} for {request.path}")
                 raise
+            except Exception as e:
+                logger.error(f"Handler error: {e}")
+                raise
         
-        app.middlewares.append(log_requests)
+        # Create app with middleware
+        app = web.Application(middlewares=[log_requests])
         
         # Serve stream files
         async def serve_stream_file(request):
@@ -1121,6 +1122,8 @@ class FlyBrowser:
             return web.FileResponse(file_path)
         
         app.router.add_get('/streams/{stream_id}/{filename}', serve_stream_file)
+        logger.info(f"Registered route: /streams/{{stream_id}}/{{filename}}")
+        logger.info(f"All routes: {[str(route) for route in app.router.routes()]}")
         
         # Find available port
         import socket
