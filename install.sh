@@ -307,6 +307,179 @@ check_uv() {
     PACKAGE_MANAGER="pip"
 }
 
+# Selected Python executable (set by select_python_version)
+SELECTED_PYTHON="python3"
+
+# Detect available Python versions
+detect_python_versions() {
+    local -a pythons=()
+    local -a python_info=()
+    
+    # Common Python executable names to check
+    local -a candidates=(
+        "python3.13"
+        "python3.12"
+        "python3.11"
+        "python3.10"
+        "python3.9"
+        "python3"
+        "python"
+    )
+    
+    # Also check common installation paths
+    local -a paths=(
+        "/usr/local/bin"
+        "/usr/bin"
+        "/opt/homebrew/bin"
+        "$HOME/.pyenv/shims"
+        "$HOME/.local/bin"
+    )
+    
+    # Check each candidate
+    for candidate in "${candidates[@]}"; do
+        # Check in PATH first
+        if command -v "$candidate" &> /dev/null; then
+            local py_path
+            py_path=$(command -v "$candidate")
+            local version
+            version=$($py_path -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null) || continue
+            
+            # Check if this version is already in our list (avoid duplicates)
+            local found=false
+            for existing in "${python_info[@]}"; do
+                if [[ "$existing" == *"$version"* ]]; then
+                    found=true
+                    break
+                fi
+            done
+            
+            if [ "$found" = false ]; then
+                pythons+=("$py_path")
+                python_info+=("Python $version ($py_path)")
+            fi
+        fi
+        
+        # Also check in specific paths
+        for path in "${paths[@]}"; do
+            local full_path="$path/$candidate"
+            if [ -x "$full_path" ] && [ -f "$full_path" ]; then
+                local version
+                version=$($full_path -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null) || continue
+                
+                # Check for duplicates
+                local found=false
+                for existing in "${python_info[@]}"; do
+                    if [[ "$existing" == *"$version"* ]]; then
+                        found=true
+                        break
+                    fi
+                done
+                
+                if [ "$found" = false ]; then
+                    pythons+=("$full_path")
+                    python_info+=("Python $version ($full_path)")
+                fi
+            fi
+        done
+    done
+    
+    # Store results in global arrays
+    DETECTED_PYTHONS=("${pythons[@]}")
+    DETECTED_PYTHON_INFO=("${python_info[@]}")
+}
+
+# Check if a Python version meets minimum requirements
+check_python_version() {
+    local py_path="$1"
+    local version
+    version=$($py_path -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null) || return 1
+    
+    local major minor
+    major=$(echo "$version" | cut -d. -f1)
+    minor=$(echo "$version" | cut -d. -f2)
+    
+    # Check for Python 3.9+
+    if [ "$major" -eq 3 ] && [ "$minor" -ge 9 ]; then
+        return 0
+    elif [ "$major" -gt 3 ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Allow user to select Python version
+select_python_version() {
+    detect_python_versions
+    
+    # Filter to only valid versions (3.9+)
+    local -a valid_pythons=()
+    local -a valid_info=()
+    
+    for i in "${!DETECTED_PYTHONS[@]}"; do
+        if check_python_version "${DETECTED_PYTHONS[$i]}"; then
+            valid_pythons+=("${DETECTED_PYTHONS[$i]}")
+            valid_info+=("${DETECTED_PYTHON_INFO[$i]}")
+        fi
+    done
+    
+    if [ ${#valid_pythons[@]} -eq 0 ]; then
+        print_error "No compatible Python version found (3.9+ required)"
+        print_info "Install Python 3.9 or higher and try again:"
+        print_info "  macOS: brew install python@3.11"
+        print_info "  Linux: sudo apt install python3.11"
+        print_info "  Or visit: https://www.python.org/downloads/"
+        exit 1
+    fi
+    
+    # If only one valid Python, use it
+    if [ ${#valid_pythons[@]} -eq 1 ]; then
+        SELECTED_PYTHON="${valid_pythons[0]}"
+        print_success "Using ${valid_info[0]}"
+        return
+    fi
+    
+    # Non-interactive mode: use first valid Python
+    if [ ! -t 0 ] || [ "${FLYBROWSER_ACCEPT_DEFAULTS:-}" = "true" ]; then
+        SELECTED_PYTHON="${valid_pythons[0]}"
+        print_info "Auto-selected: ${valid_info[0]}"
+        return
+    fi
+    
+    # Interactive mode: let user choose
+    echo ""
+    print_msg "$CYAN" "$EMOJI_PACKAGE Available Python versions:"
+    echo ""
+    
+    for i in "${!valid_info[@]}"; do
+        local num=$((i + 1))
+        if [ $i -eq 0 ]; then
+            echo -e "  ${GREEN}$num)${NC} ${valid_info[$i]} ${GREEN}(recommended)${NC}"
+        else
+            echo "  $num) ${valid_info[$i]}"
+        fi
+    done
+    echo ""
+    
+    while true; do
+        read -p "Select Python version [1-${#valid_pythons[@]}] (default: 1): " choice
+        
+        # Default to first option
+        if [ -z "$choice" ]; then
+            choice=1
+        fi
+        
+        # Validate choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#valid_pythons[@]} ]; then
+            local idx=$((choice - 1))
+            SELECTED_PYTHON="${valid_pythons[$idx]}"
+            print_success "Selected: ${valid_info[$idx]}"
+            return
+        else
+            print_warning "Please enter a number between 1 and ${#valid_pythons[@]}"
+        fi
+    done
+}
+
 # Install uv if user wants it
 install_uv_if_requested() {
     if [ "$FORCE_PIP" = true ]; then
@@ -353,45 +526,12 @@ print_banner() {
     echo ""
 }
 
-# Check for required commands
+# Check for required commands (excluding Python, which is handled by select_python_version)
 check_requirements() {
     print_step "Checking system requirements..."
     echo ""
 
     local all_ok=true
-
-    # Python check
-    if command -v python3 &> /dev/null; then
-        local python_version
-        python_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")')
-        local major
-        local minor
-        major=$(echo "$python_version" | cut -d. -f1)
-        minor=$(echo "$python_version" | cut -d. -f2)
-        
-        # Check for Python 3.9+
-        if [ "$major" -eq 3 ] && [ "$minor" -ge 9 ]; then
-            print_success "Python $python_version"
-        elif [ "$major" -gt 3 ]; then
-            print_success "Python $python_version"
-        else
-            print_error "Python $python_version (3.9+ required)"
-            all_ok=false
-        fi
-    else
-        print_error "Python 3 not found"
-        all_ok=false
-    fi
-
-    # pip check
-    if command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
-        local pip_version
-        pip_version=$(pip3 --version 2>/dev/null | cut -d' ' -f2) || pip_version=$(pip --version 2>/dev/null | cut -d' ' -f2) || pip_version="unknown"
-        print_success "pip $pip_version"
-    else
-        print_error "pip not found"
-        all_ok=false
-    fi
 
     # git check (optional but recommended)
     if command -v git &> /dev/null; then
@@ -423,15 +563,13 @@ check_requirements() {
     
     if [ "$all_ok" = false ]; then
         print_error "Missing required dependencies. Please install them and try again."
-        echo ""
-        print_info "Install Python: https://www.python.org/downloads/"
         exit 1
     fi
 }
 
 # Create virtual environment
 create_venv() {
-    print_step "Creating virtual environment..."
+    print_step "Creating virtual environment with $SELECTED_PYTHON..."
     
     mkdir -p "$DATA_DIR"
     
@@ -441,12 +579,15 @@ create_venv() {
     fi
     
     if [ "$PACKAGE_MANAGER" = "uv" ]; then
-        uv venv "$VENV_DIR" --python python3 2>/dev/null || python3 -m venv "$VENV_DIR"
+        uv venv "$VENV_DIR" --python "$SELECTED_PYTHON" 2>/dev/null || "$SELECTED_PYTHON" -m venv "$VENV_DIR"
     else
-        python3 -m venv "$VENV_DIR"
+        "$SELECTED_PYTHON" -m venv "$VENV_DIR"
     fi
     
-    print_success "Virtual environment created at $VENV_DIR"
+    # Verify the venv Python
+    local venv_python_version
+    venv_python_version=$("$VENV_DIR/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null) || venv_python_version="unknown"
+    print_success "Virtual environment created at $VENV_DIR (Python $venv_python_version)"
 }
 
 # Install FlyBrowser from source
@@ -864,39 +1005,85 @@ verify_installation() {
     fi
 }
 
-# Print completion message
+# Print completion message with detailed summary
 print_completion() {
-    echo ""
-    echo "============================================================"
-    print_msg "$GREEN" "$EMOJI_ROCKET FlyBrowser installation complete!"
-    echo "============================================================"
-    echo ""
-    
-    # Get version
+    # Get version and Python info
     # shellcheck source=/dev/null
     source "$VENV_DIR/bin/activate"
     local version
     version=$(python -c "import flybrowser; print(flybrowser.__version__)" 2>/dev/null) || version="unknown"
-    print_info "Version: $version"
+    local python_version
+    python_version=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null) || python_version="unknown"
+    
+    # Check for Playwright browsers
+    local playwright_status="not checked"
+    if python -c "from playwright.sync_api import sync_playwright" 2>/dev/null; then
+        playwright_status="installed"
+    else
+        playwright_status="not installed"
+    fi
+    
+    # Check for config file
+    local config_status="not configured"
+    if [ -f "$HOME/.flybrowser/.env" ] || [ -f ".env" ]; then
+        config_status="configured"
+    fi
+    
+    echo ""
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}$EMOJI_ROCKET FlyBrowser Installation Complete!${NC}              ${GREEN}║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
-    print_msg "$BOLD" "Quick Start:"
+    # Installation Summary
+    print_msg "$BOLD" "$EMOJI_PACKAGE Installation Summary:"
+    echo -e "  ${CYAN}FlyBrowser Version:${NC}  $version"
+    echo -e "  ${CYAN}Python Version:${NC}      $python_version"
+    echo -e "  ${CYAN}Virtual Environment:${NC} $VENV_DIR"
+    echo -e "  ${CYAN}CLI Commands:${NC}        $INSTALL_DIR"
+    echo -e "  ${CYAN}Package Manager:${NC}     $PACKAGE_MANAGER"
+    echo -e "  ${CYAN}Playwright:${NC}          $playwright_status"
+    echo -e "  ${CYAN}Configuration:${NC}       $config_status"
+    echo ""
+    
+    # Installed Commands
+    print_msg "$BOLD" "$EMOJI_GEAR Installed Commands:"
+    echo -e "  ${GREEN}flybrowser${NC}              Main CLI (recommended)"
+    echo -e "  ${DIM}flybrowser-setup${NC}        Setup and configuration"
+    echo -e "  ${DIM}flybrowser-serve${NC}        API server"
+    echo -e "  ${DIM}flybrowser-cluster${NC}      Cluster management"
+    echo -e "  ${DIM}flybrowser-admin${NC}        Administration"
+    echo ""
+    
+    # Quick Start
+    print_msg "$BOLD" "$EMOJI_ARROW Quick Start:"
     echo "  flybrowser                    # Launch interactive REPL"
     echo "  flybrowser setup configure    # Run configuration wizard"
     echo "  flybrowser serve              # Start the API server"
     echo "  flybrowser doctor             # Check installation health"
     echo ""
     
-    print_msg "$BOLD" "Legacy Commands (still supported):"
-    echo "  flybrowser-setup configure    # Configuration wizard"
-    echo "  flybrowser-serve              # Start server"
-    echo "  flybrowser-cluster status     # Check cluster"
+    # Next Steps based on status
+    print_msg "$BOLD" "$EMOJI_INFO Next Steps:"
+    if [ "$config_status" = "not configured" ]; then
+        echo -e "  ${YELLOW}1.${NC} Configure FlyBrowser: ${CYAN}flybrowser setup configure${NC}"
+        echo -e "  ${YELLOW}2.${NC} Set up LLM API keys (OpenAI, Anthropic, etc.)"
+        echo -e "  ${YELLOW}3.${NC} Start using: ${CYAN}flybrowser${NC}"
+    else
+        echo -e "  ${YELLOW}1.${NC} Start using: ${CYAN}flybrowser${NC}"
+        echo -e "  ${YELLOW}2.${NC} Run diagnostics: ${CYAN}flybrowser doctor${NC}"
+    fi
     echo ""
     
+    # Resources
     print_msg "$BOLD" "Resources:"
     echo "  Documentation: https://flybrowser.dev/docs"
     echo "  GitHub:        https://github.com/$GITHUB_REPO"
     echo "  Discord:       https://discord.gg/flybrowser"
+    echo ""
+    
+    # Uninstall info
+    print_msg "$DIM" "To uninstall: ./uninstall.sh or flybrowser uninstall"
     echo ""
 }
 
@@ -918,8 +1105,13 @@ main() {
     # Clone repository if not in source directory
     clone_to_temp
 
+    # Phase 0: Detect and select Python version
+    print_step "Detecting Python installations..."
+    select_python_version
+    
     echo ""
     print_msg "$BOLD" "Installation Settings:"
+    echo "  Python:               $SELECTED_PYTHON"
     echo "  Install directory:    $INSTALL_DIR"
     echo "  Virtual environment:  $VENV_DIR"
     echo "  Version:              $FLYBROWSER_VERSION"
@@ -928,7 +1120,7 @@ main() {
     echo "  Package manager:      $PACKAGE_MANAGER"
     echo ""
 
-    # Phase 1: Check requirements
+    # Phase 1: Check other requirements
     check_requirements
     
     # Offer to install uv if not available
