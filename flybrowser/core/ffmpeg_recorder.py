@@ -496,6 +496,11 @@ class FFmpegRecorder:
                     
                 except Exception as e:
                     logger.error(f"Frame capture error: {e}")
+                    # Check if page is still available
+                    if "page" in str(e).lower() or "target" in str(e).lower():
+                        logger.error("Page no longer available, stopping frame capture")
+                        self._recording = False
+                        break
                 
                 # Maintain frame rate
                 elapsed = time.time() - start_time
@@ -516,10 +521,23 @@ class FFmpegRecorder:
     async def _write_frames(self) -> None:
         """Write frames from buffer to ffmpeg stdin."""
         loop = asyncio.get_event_loop()
+        consecutive_errors = 0
+        max_consecutive_errors = 5
         
         try:
             while self._recording or not self._frame_buffer.empty():
                 try:
+                    # Check FFmpeg process health
+                    if self._process and self._process.poll() is not None:
+                        logger.error(f"FFmpeg process died with code {self._process.returncode}")
+                        # Log FFmpeg stderr for debugging
+                        if self._process.stderr:
+                            stderr = self._process.stderr.read()
+                            if stderr:
+                                logger.error(f"FFmpeg stderr: {stderr[:500]}")
+                        self._recording = False
+                        break
+                    
                     # Get frame from buffer (with timeout)
                     frame_data = await asyncio.wait_for(
                         self._frame_buffer.get(),
@@ -533,14 +551,29 @@ class FFmpegRecorder:
                             self._process.stdin.write,
                             frame_data
                         )
+                        # Flush to ensure data is sent
+                        await loop.run_in_executor(
+                            None,
+                            self._process.stdin.flush
+                        )
+                        consecutive_errors = 0  # Reset error counter on success
                         
                 except asyncio.TimeoutError:
                     if not self._recording:
                         break
                     continue
                 except Exception as e:
-                    logger.error(f"Frame write error: {e}")
-                    break
+                    consecutive_errors += 1
+                    logger.error(f"Frame write error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                    
+                    # Only stop if we hit max consecutive errors
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error("Too many consecutive frame write errors, stopping")
+                        self._recording = False
+                        break
+                    
+                    # Brief pause before retrying
+                    await asyncio.sleep(0.1)
                     
         except asyncio.CancelledError:
             logger.info("Frame writing cancelled")

@@ -178,33 +178,73 @@ CRITICAL: Return ONLY valid JSON with actual extracted values. No markdown, no e
 Start with { and end with } - nothing else.
 """
 
-ACTION_PLANNING_SYSTEM = """You are a web automation planner. Your task is to break down high-level instructions into specific browser actions.
+ACTION_PLANNING_SYSTEM = """You are a web automation planner. Break down instructions into specific browser actions.
 
 You will be provided with:
 1. Current page state and screenshot
-2. A high-level instruction (e.g., "add item to cart")
+2. An instruction (e.g., "search for X")
+3. Visible interactive elements
 
-Break down the instruction into atomic actions such as:
-- click(selector)
-- type(selector, text)
-- scroll(direction)
-- wait(condition)
+Available action types:
+- click: Click an element
+- type: Type text into an input
+- fill: Fill a form field  
+- select: Select from dropdown
+- hover: Hover over element
+- scroll: Scroll page
+- wait: Wait for condition
+- press_key: Press keyboard key
 
-CRITICAL: You MUST respond with ONLY a valid JSON object. Do NOT include:
-- Explanations or reasoning outside the JSON
-- Markdown code blocks
-- Any text before or after the JSON
-
-Return ONLY this JSON structure:
+OUTPUT FORMAT - ALWAYS use this structure:
 {
   "actions": [
-    {"action_type": "click", "target": "description", "value": null, "options": {}},
-    ...
+    {"action_type": "...", "target": "...", "value": "...", "options": {}}
   ],
-  "reasoning": "Brief plan explanation"
+  "reasoning": "Brief explanation"
 }
 
-Start your response with { and end with } - nothing else.
+GOOD EXAMPLES:
+Instruction: "Click the login button"
+{
+  "actions": [
+    {"action_type": "click", "target": "login button", "value": null, "options": {}}
+  ],
+  "reasoning": "Click the login button to proceed"
+}
+
+Instruction: "Search for 'python tutorial'"
+{
+  "actions": [
+    {"action_type": "click", "target": "search input box", "value": null, "options": {}},
+    {"action_type": "type", "target": "search input", "value": "python tutorial", "options": {}},
+    {"action_type": "press_key", "target": "search input", "value": "Enter", "options": {}}
+  ],
+  "reasoning": "Click search box, type query, press Enter to submit"
+}
+
+Instruction: "Fill form with name John Doe and email john@test.com"
+{
+  "actions": [
+    {"action_type": "fill", "target": "name input field", "value": "John Doe", "options": {}},
+    {"action_type": "fill", "target": "email input field", "value": "john@test.com", "options": {}}
+  ],
+  "reasoning": "Fill the form fields with provided information"
+}
+
+BAD EXAMPLES (DO NOT DO THIS):
+{
+  "type": "object",
+  "properties": {...}
+}
+
+{
+  "actions": {
+    "description": "The actions array"
+  }
+}
+
+CRITICAL: Return ONLY valid JSON with actual action steps. No markdown, no explanations outside JSON, no schema definitions.
+Start with { and end with } - nothing else.
 """
 
 NAVIGATION_SYSTEM = """You are a web navigation assistant. Your task is to help navigate web pages intelligently.
