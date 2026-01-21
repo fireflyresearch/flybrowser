@@ -303,6 +303,16 @@ def cmd_admin(args: argparse.Namespace, remaining: List[str]) -> int:
     sys.exit(admin.main())
 
 
+def cmd_uninstall(args: argparse.Namespace, remaining: List[str]) -> int:
+    """Delegate to uninstall CLI."""
+    from flybrowser.cli import uninstall
+    
+    # Reconstruct argv for the uninstall module
+    sys.argv = ["flybrowser-uninstall"] + remaining
+    uninstall.main()
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser."""
     parser = argparse.ArgumentParser(
@@ -413,6 +423,13 @@ Documentation: https://flybrowser.dev/docs
         add_help=False,
     )
     
+    # uninstall command (pass-through)
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Uninstall FlyBrowser",
+        add_help=False,
+    )
+    
     return parser
 
 
@@ -432,6 +449,8 @@ def main() -> None:
         sys.exit(cmd_cluster(args, remaining))
     elif args.command == "admin":
         sys.exit(cmd_admin(args, remaining))
+    elif args.command == "uninstall":
+        sys.exit(cmd_uninstall(args, remaining))
     
     # Handle other commands normally
     if args.command is None:

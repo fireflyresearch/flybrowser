@@ -59,6 +59,7 @@ flybrowser-setup = "flybrowser.cli.setup:main"
 flybrowser-serve = "flybrowser.cli.serve:main"
 flybrowser-cluster = "flybrowser.cli.cluster:main"
 flybrowser-admin = "flybrowser.cli.admin:main"
+flybrowser-uninstall = "flybrowser.cli.uninstall:main"
 
 [project.optional-dependencies]
 dev = [
