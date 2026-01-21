@@ -995,6 +995,12 @@ class FlyBrowser:
                 config=config,
             )
             
+            # Log stream directory for debugging
+            stream = self._streaming_manager._streams.get(stream_info.stream_id)
+            if stream:
+                logger.info(f"Stream files will be at: {stream.stream_dir}")
+                logger.info(f"Expected playlist: {stream.stream_dir / 'playlist.m3u8'}")
+            
             # Return stream information with correct local URLs
             result = {
                 "stream_id": stream_info.stream_id,
@@ -1081,7 +1087,20 @@ class FlyBrowser:
             filename = request.match_info['filename']
             file_path = stream_dir / stream_id / filename
             
+            logger.debug(f"HTTP request for: {file_path}")
+            logger.debug(f"Stream dir: {stream_dir}")
+            logger.debug(f"File exists: {file_path.exists()}")
+            
+            # List directory contents for debugging
+            stream_subdir = stream_dir / stream_id
+            if stream_subdir.exists():
+                files = list(stream_subdir.iterdir())
+                logger.debug(f"Files in {stream_subdir}: {[f.name for f in files]}")
+            else:
+                logger.debug(f"Stream directory doesn't exist: {stream_subdir}")
+            
             if not file_path.exists():
+                logger.warning(f"File not found: {file_path}")
                 return web.Response(status=404)
             
             return web.FileResponse(file_path)
@@ -1105,6 +1124,7 @@ class FlyBrowser:
         
         self._local_stream_server = runner
         logger.info(f"Local stream server started on http://localhost:{port}")
+        logger.info(f"Serving streams from: {stream_dir}")
     
     async def _capture_frames_for_stream(self, stream_id: str) -> None:
         """Capture browser frames and send to stream.
