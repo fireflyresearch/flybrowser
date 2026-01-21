@@ -969,10 +969,20 @@ class FlyBrowser:
                 rtmp_key=rtmp_key,
             )
             
+            # Validate prerequisites
+            if not self.browser_manager:
+                raise RuntimeError("Browser not initialized. Call start() first.")
+            
+            # Get page from browser_manager
+            try:
+                page = self.browser_manager.page
+            except Exception as e:
+                raise RuntimeError(f"Page not available: {e}")
+            
             # Create and start stream
             stream_info = await self._streaming_manager.create_stream(
                 session_id=self._session_id or "embedded",
-                page=self._page,
+                page=page,
                 config=config,
             )
             
