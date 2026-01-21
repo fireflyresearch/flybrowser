@@ -949,11 +949,21 @@ class FlyBrowser:
         # Start streaming session
         try:
             # Create stream configuration
-            from flybrowser.service.streaming import StreamConfig, StreamingProtocol, VideoCodec, QualityPreset
+            from flybrowser.service.streaming import StreamConfig
+            from flybrowser.core.ffmpeg_recorder import QualityProfile
+            
+            # Map quality string to QualityProfile enum
+            quality_map = {
+                "low_bandwidth": QualityProfile.LOW_BANDWIDTH,
+                "medium": QualityProfile.MEDIUM,
+                "high": QualityProfile.HIGH,
+                "lossless": QualityProfile.LOSSLESS,
+            }
+            quality_profile = quality_map.get(quality.lower(), QualityProfile.MEDIUM)
             
             config = StreamConfig(
                 protocol=stream_protocol,
-                quality_preset=QualityPreset(quality.upper()) if isinstance(quality, str) else quality,
+                quality_profile=quality_profile,  # Correct parameter name
                 codec=video_codec,
                 rtmp_url=rtmp_url,
                 rtmp_key=rtmp_key,
