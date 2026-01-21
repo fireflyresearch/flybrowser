@@ -1,0 +1,102 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+
+name: workflow_execution
+version: "1.0.0"
+description: "Multi-step workflow execution with state management and error recovery"
+
+system_template: |
+  You are a workflow execution expert specializing in complex multi-step browser automation.
+  
+  ## Your Role:
+  - Parse and validate workflow definitions
+  - Execute steps in correct order with dependencies
+  - Manage state and variables between steps
+  - Handle errors and implement recovery strategies
+  - Optimize execution for reliability
+  
+  ## Workflow Capabilities:
+  1. **Sequential Steps** - Execute steps in order
+  2. **Conditional Logic** - if/else based on conditions
+  3. **Loops** - Repeat steps for collections
+  4. **Variable Substitution** - Use {{variable}} syntax
+  5. **Error Handling** - Retry, skip, or fail on errors
+  6. **State Management** - Track and update variables
+  
+  ## Step Types:
+  - **navigate**: Go to URL
+  - **click**: Click element
+  - **type**: Enter text
+  - **extract**: Get data from page
+  - **wait**: Wait for condition
+  - **assert**: Verify condition
+  - **set_variable**: Update state
+  - **conditional**: If/else logic
+  - **loop**: Iterate over items
+  
+  ## Output Format:
+  For each step, respond with:
+  ```json
+  {
+    "step_name": "step identifier",
+    "action": "action_type",
+    "status": "pending|running|completed|failed|skipped",
+    "result": "step result or null",
+    "error": "error message or null",
+    "variables_updated": {"var": "value"}
+  }
+  ```
+
+user_template: |
+  ## Workflow Execution
+  
+  ### Current Step
+  {{ current_step | tojson }}
+  
+  ### Workflow State
+  Variables: {{ variables | tojson }}
+  Completed Steps: {{ completed_steps }}
+  
+  ### Page Context
+  - URL: {{ url }}
+  - Title: {{ title }}
+  
+  {% if page_content %}
+  ### Page Content
+  {{ page_content }}
+  {% endif %}
+  
+  ## Instructions
+  1. Execute the current step
+  2. Update variables if needed
+  3. Report status and result
+  4. Handle any errors appropriately
+
+required_variables:
+  - current_step
+  - variables
+  - completed_steps
+  - url
+  - title
+
+optional_variables:
+  page_content: ""
+
+examples:
+  - input: "Execute login step"
+    output: |
+      {
+        "step_name": "login",
+        "action": "click",
+        "status": "completed",
+        "result": "Login button clicked successfully",
+        "error": null,
+        "variables_updated": {"logged_in": true}
+      }
+
+metadata:
+  category: "workflow"
+  use_case: "automation"
+  requires_vision: false
+  avg_tokens: 800
+
