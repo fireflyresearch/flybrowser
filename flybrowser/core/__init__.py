@@ -35,24 +35,42 @@ from flybrowser.core.recording import (
     VideoRecorder,
     VideoRecording,
 )
+from flybrowser.core.ffmpeg_recorder import (
+    FFmpegConfig,
+    FFmpegRecorder,
+    QualityProfile,
+    RecordingMetadata,
+    StreamingProtocol,
+    VideoCodec,
+    detect_hardware_acceleration,
+    get_recommended_config,
+)
 
 __all__ = [
     "BrowserManager",
     "BrowserPool",
     "BrowserSession",
     "BrowserSessionState",
+    "FFmpegConfig",
+    "FFmpegRecorder",
     "Job",
     "JobQueue",
     "JobState",
     "PageController",
     "PoolConfig",
+    "QualityProfile",
     "RecordingConfig",
     "RecordingManager",
+    "RecordingMetadata",
     "RecordingState",
     "Screenshot",
     "ScreenshotCapture",
     "ScreenshotFormat",
+    "StreamingProtocol",
+    "VideoCodec",
     "VideoRecorder",
     "VideoRecording",
+    "detect_hardware_acceleration",
+    "get_recommended_config",
 ]
 

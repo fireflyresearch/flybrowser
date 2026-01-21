@@ -44,7 +44,7 @@ server or a multi-node cluster. The SDK handles all complexity internally.
 from __future__ import annotations
 
 import base64
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from flybrowser.utils.logger import logger
 
@@ -161,6 +161,10 @@ class FlyBrowser:
         self.pii_handler = None
         self._screenshot_capture = None
         self._recording_manager = None
+        self._streaming_manager = None
+        self._local_stream_server = None
+        self._local_stream_port = None
+        self._active_stream_id = None
 
         logger.info(f"Initializing FlyBrowser in {self._mode} mode")
 
@@ -304,6 +308,21 @@ class FlyBrowser:
             if self._client:
                 await self._client.stop()
         else:
+            # Stop active stream if any
+            if self._active_stream_id:
+                try:
+                    await self._stop_embedded_stream()
+                except Exception as e:
+                    logger.warning(f"Error stopping stream: {e}")
+            
+            # Stop local stream server
+            if self._local_stream_server:
+                try:
+                    await self._local_stream_server.cleanup()
+                    self._local_stream_server = None
+                except Exception as e:
+                    logger.warning(f"Error stopping stream server: {e}")
+            
             if self.browser_manager:
                 await self.browser_manager.stop()
 
@@ -531,6 +550,185 @@ class FlyBrowser:
             logger.info(f"Recording stopped: {result.get('session_id')}")
             return result
 
+    # Streaming methods
+    async def start_stream(
+        self,
+        protocol: str = "hls",
+        quality: str = "medium",
+        codec: str = "h264",
+        rtmp_url: Optional[str] = None,
+        rtmp_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Start a live stream of the browser session.
+
+        Args:
+            protocol: Streaming protocol (hls, dash, rtmp)
+            quality: Quality profile (low_bandwidth, medium, high)
+            codec: Video codec (h264, h265, vp9)
+            rtmp_url: RTMP destination URL (for RTMP protocol)
+            rtmp_key: RTMP stream key
+
+        Returns:
+            Dictionary with stream URLs and stream_id
+
+        Example:
+            >>> stream = await browser.start_stream(protocol="hls", quality="medium")
+            >>> print(stream["hls_url"])
+            >>> # View stream in player
+            >>> await browser.stop_stream()
+        """
+        self._ensure_started()
+
+        if self._mode == "server":
+            response = await self._client._request(
+                "POST",
+                f"/sessions/{self._session_id}/stream/start",
+                json={
+                    "protocol": protocol,
+                    "quality": quality,
+                    "codec": codec,
+                    "rtmp_url": rtmp_url,
+                    "rtmp_key": rtmp_key,
+                },
+            )
+            return response or {}
+        else:
+            # Embedded mode: Start local streaming
+            return await self._start_embedded_stream(protocol, quality, codec, rtmp_url, rtmp_key)
+
+    async def stop_stream(self) -> Dict[str, Any]:
+        """
+        Stop the active stream.
+
+        Returns:
+            Dictionary with stream statistics
+        """
+        self._ensure_started()
+
+        if self._mode == "server":
+            response = await self._client._request(
+                "POST",
+                f"/sessions/{self._session_id}/stream/stop",
+            )
+            return response or {}
+        else:
+            # Embedded mode: Stop local streaming
+            return await self._stop_embedded_stream()
+
+    async def get_stream_status(self) -> Dict[str, Any]:
+        """
+        Get status and metrics of the active stream.
+
+        Returns:
+            Dictionary with stream status, health, metrics, and URLs
+        """
+        self._ensure_started()
+
+        if self._mode == "server":
+            response = await self._client._request(
+                "GET",
+                f"/sessions/{self._session_id}/stream/status",
+            )
+            return response or {}
+        else:
+            # Embedded mode: Get local stream status
+            return await self._get_embedded_stream_status()
+
+    # Recording management methods
+    async def list_recordings(self, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List available recordings.
+
+        Args:
+            session_id: Filter by session ID (optional)
+
+        Returns:
+            List of recording dictionaries
+
+        Example:
+            >>> recordings = await browser.list_recordings()
+            >>> for rec in recordings:
+            ...     print(f"{rec['recording_id']}: {rec['duration_seconds']}s")
+        """
+        if self._mode == "server":
+            response = await self._client._request(
+                "GET",
+                "/recordings",
+                params={"session_id": session_id} if session_id else {},
+            )
+            return response.get("recordings", []) if response else []
+        else:
+            raise NotImplementedError("Recording management is only available in server mode")
+
+    async def download_recording(
+        self,
+        recording_id: str,
+        output_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Download a recording.
+
+        Args:
+            recording_id: Recording identifier
+            output_path: Local path to save file (if None, returns download URL)
+
+        Returns:
+            Dictionary with download information or path
+
+        Example:
+            >>> info = await browser.download_recording("rec_123", "recording.mp4")
+            >>> print(f"Downloaded to {info['file_path']}")
+        """
+        if self._mode == "server":
+            # Get download URL
+            response = await self._client._request(
+                "GET",
+                f"/recordings/{recording_id}/download",
+            )
+            
+            if not response:
+                raise ValueError(f"Recording not found: {recording_id}")
+            
+            if output_path:
+                # Download file
+                import aiohttp
+                download_url = response.get("download_url")
+                if download_url:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(download_url) as resp:
+                            if resp.status == 200:
+                                with open(output_path, "wb") as f:
+                                    f.write(await resp.read())
+                                return {"file_path": output_path, "success": True}
+                    raise Exception("Download failed")
+            
+            return response
+        else:
+            raise NotImplementedError("Recording management is only available in server mode")
+
+    async def delete_recording(self, recording_id: str) -> bool:
+        """
+        Delete a recording.
+
+        Args:
+            recording_id: Recording identifier
+
+        Returns:
+            True if successful
+
+        Example:
+            >>> await browser.delete_recording("rec_123")
+        """
+        if self._mode == "server":
+            response = await self._client._request(
+                "DELETE",
+                f"/recordings/{recording_id}",
+            )
+            return response.get("success", False) if response else False
+        else:
+            raise NotImplementedError("Recording management is only available in server mode")
+
     # PII handling methods
     def store_credential(self, name: str, value: str, pii_type: str = "password") -> str:
         """
@@ -698,6 +896,191 @@ class FlyBrowser:
         return await self.monitoring_agent.execute(
             condition, max_duration=timeout, poll_interval=poll_interval
         )
+
+    # Embedded streaming implementation methods
+    async def _start_embedded_stream(
+        self,
+        protocol: str,
+        quality: str,
+        codec: str,
+        rtmp_url: Optional[str],
+        rtmp_key: Optional[str],
+    ) -> Dict[str, Any]:
+        """Start streaming in embedded mode with local HTTP server."""
+        import asyncio
+        import uuid
+        from aiohttp import web
+        from pathlib import Path
+        import tempfile
+        from flybrowser.core.ffmpeg_recorder import VideoCodec, FFmpegRecorder, QualityProfile
+        from flybrowser.service.streaming import StreamingManager, StreamingProtocol
+        
+        if self._active_stream_id:
+            raise RuntimeError("Stream already active. Stop current stream first.")
+        
+        # Initialize streaming manager if not exists
+        if not self._streaming_manager:
+            self._streaming_manager = StreamingManager(max_concurrent_streams=1)
+        
+        # Convert protocol string to enum
+        protocol_map = {
+            "hls": StreamingProtocol.HLS,
+            "dash": StreamingProtocol.DASH,
+            "rtmp": StreamingProtocol.RTMP,
+        }
+        stream_protocol = protocol_map.get(protocol.lower(), StreamingProtocol.HLS)
+        
+        # Convert codec string to enum
+        codec_map = {
+            "h264": VideoCodec.H264,
+            "h265": VideoCodec.H265,
+            "vp9": VideoCodec.VP9,
+        }
+        video_codec = codec_map.get(codec.lower(), VideoCodec.H264)
+        
+        # Create temporary output directory for streams
+        stream_dir = Path(tempfile.gettempdir()) / "flybrowser_streams"
+        stream_dir.mkdir(exist_ok=True)
+        
+        # Generate unique stream ID
+        stream_id = f"stream_{uuid.uuid4().hex[:8]}"
+        self._active_stream_id = stream_id
+        
+        # Start streaming session
+        try:
+            await self._streaming_manager.start_stream(
+                stream_id=stream_id,
+                protocol=stream_protocol,
+                quality=quality,
+                codec=video_codec,
+                output_path=str(stream_dir / stream_id),
+                rtmp_url=rtmp_url,
+                rtmp_key=rtmp_key,
+            )
+            
+            # Start local HTTP server if not already running
+            if not self._local_stream_server:
+                await self._start_local_stream_server(stream_dir)
+            
+            # Start frame capture task
+            asyncio.create_task(self._capture_frames_for_stream(stream_id))
+            
+            # Build stream URLs
+            base_url = f"http://localhost:{self._local_stream_port}/{stream_id}"
+            result = {
+                "stream_id": stream_id,
+                "protocol": protocol,
+                "quality": quality,
+                "codec": codec,
+                "status": "active",
+            }
+            
+            if stream_protocol == StreamingProtocol.HLS:
+                result["hls_url"] = f"{base_url}/playlist.m3u8"
+                result["stream_url"] = result["hls_url"]
+            elif stream_protocol == StreamingProtocol.DASH:
+                result["dash_url"] = f"{base_url}/manifest.mpd"
+                result["stream_url"] = result["dash_url"]
+            
+            logger.info(f"Embedded stream started: {stream_id}")
+            return result
+            
+        except Exception as e:
+            self._active_stream_id = None
+            logger.error(f"Failed to start embedded stream: {e}")
+            raise
+    
+    async def _stop_embedded_stream(self) -> Dict[str, Any]:
+        """Stop the active embedded stream."""
+        if not self._active_stream_id:
+            return {"success": False, "error": "No active stream"}
+        
+        try:
+            stats = await self._streaming_manager.stop_stream(self._active_stream_id)
+            stream_id = self._active_stream_id
+            self._active_stream_id = None
+            
+            logger.info(f"Embedded stream stopped: {stream_id}")
+            return {
+                "stream_id": stream_id,
+                "success": True,
+                "statistics": stats,
+            }
+        except Exception as e:
+            logger.error(f"Failed to stop embedded stream: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def _get_embedded_stream_status(self) -> Dict[str, Any]:
+        """Get status of the active embedded stream."""
+        if not self._active_stream_id:
+            return {"active": False, "error": "No active stream"}
+        
+        try:
+            status = await self._streaming_manager.get_stream_status(self._active_stream_id)
+            return {
+                "stream_id": self._active_stream_id,
+                "active": True,
+                "status": status,
+            }
+        except Exception as e:
+            return {"active": False, "error": str(e)}
+    
+    async def _start_local_stream_server(self, stream_dir: Path) -> None:
+        """Start local HTTP server for serving stream files."""
+        from aiohttp import web
+        import asyncio
+        
+        app = web.Application()
+        
+        # Serve stream files
+        async def serve_stream_file(request):
+            stream_id = request.match_info['stream_id']
+            filename = request.match_info['filename']
+            file_path = stream_dir / stream_id / filename
+            
+            if not file_path.exists():
+                return web.Response(status=404)
+            
+            return web.FileResponse(file_path)
+        
+        app.router.add_get('/{stream_id}/{filename}', serve_stream_file)
+        
+        # Find available port
+        import socket
+        sock = socket.socket()
+        sock.bind(('', 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        
+        self._local_stream_port = port
+        
+        # Start server in background
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, 'localhost', port)
+        await site.start()
+        
+        self._local_stream_server = runner
+        logger.info(f"Local stream server started on port {port}")
+    
+    async def _capture_frames_for_stream(self, stream_id: str) -> None:
+        """Capture browser frames and send to stream."""
+        import asyncio
+        
+        try:
+            while self._active_stream_id == stream_id:
+                # Capture screenshot
+                screenshot_bytes = await self.browser_manager.page.screenshot()
+                
+                # Send frame to streaming manager
+                await self._streaming_manager.send_frame(stream_id, screenshot_bytes)
+                
+                # Wait for next frame (30 FPS)
+                await asyncio.sleep(1/30)
+                
+        except Exception as e:
+            logger.error(f"Frame capture error: {e}")
+            self._active_stream_id = None
 
     # Utility methods
     @property

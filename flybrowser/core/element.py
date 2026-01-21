@@ -35,10 +35,12 @@ from typing import Any, Dict, Optional
 
 from playwright.async_api import Page
 
+from flybrowser.agents.validation_agent import ResponseValidator
 from flybrowser.exceptions import ElementNotFoundError
 from flybrowser.llm.base import BaseLLMProvider
 from flybrowser.llm.prompts import ELEMENT_DETECTION_PROMPT, ELEMENT_DETECTION_SYSTEM
 from flybrowser.utils.logger import logger
+from flybrowser.utils.timing import StepTimer
 
 
 class ElementDetector:
@@ -75,6 +77,7 @@ class ElementDetector:
         """
         self.page = page
         self.llm = llm_provider
+        self.validator = ResponseValidator(llm_provider)
 
     async def find_element(
         self, description: str, use_vision: bool = True
@@ -103,7 +106,8 @@ class ElementDetector:
                 "selector": "CSS selector or XPath",
                 "selector_type": "css" or "xpath",
                 "confidence": 0.0-1.0,
-                "reasoning": "Why this element was selected"
+                "reasoning": "Why this element was selected",
+                "timing": {"total_ms": float, "breakdown": {...}}
             }
 
         Raises:
@@ -119,13 +123,19 @@ class ElementDetector:
             ...     use_vision=False  # Use HTML-only detection
             ... )
         """
+        # Start timing
+        timer = StepTimer()
+        timer.start()
+        
         try:
             logger.info(f"Finding element: {description}")
 
             # Get page information for context
+            timer.start_step("get_page_context")
             url = self.page.url
             title = await self.page.title()
             html = await self.page.content()
+            timer.end_step("get_page_context")
 
             # Truncate HTML for prompt to avoid token limits
             # Keep first 5000 characters which usually includes key page structure
@@ -139,7 +149,20 @@ class ElementDetector:
                 html_snippet=html_snippet,
             )
 
+            # Define expected response schema
+            schema = {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string"},
+                    "selector_type": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["selector"],
+            }
+
             # Use vision-based detection if enabled
+            timer.start_step("llm_generate")
             if use_vision:
                 screenshot = await self.page.screenshot(type="png")
                 response = await self.llm.generate_with_vision(
@@ -154,17 +177,22 @@ class ElementDetector:
                     system_prompt=ELEMENT_DETECTION_SYSTEM,
                     temperature=0.3,
                 )
+            timer.end_step("llm_generate")
 
-            # Parse response
-            try:
-                result = json.loads(response.content)
-                logger.info(f"Found element with selector: {result.get('selector')}")
-                return result
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse LLM response: {response.content}")
-                raise ElementNotFoundError(
-                    f"Failed to parse element detection response for: {description}"
-                )
+            # Validate and fix response if needed
+            timer.start_step("validate_response")
+            result = await self.validator.validate_and_fix(
+                response.content,
+                schema,
+                context=f"Finding element matching: {description}"
+            )
+            timer.end_step("validate_response")
+            
+            logger.info(f"Found element with selector: {result.get('selector')}")
+            
+            # Add timing information to result
+            result["timing"] = timer.get_timings().to_dict()
+            return result
 
         except Exception as e:
             logger.error(f"Element detection failed: {e}")
