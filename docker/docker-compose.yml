@@ -1,0 +1,112 @@
+# Copyright 2026 Firefly Software Solutions Inc
+# Licensed under the Apache License, Version 2.0
+#
+# FlyBrowser Docker Compose Configuration
+#
+# Usage:
+#   Standalone mode:
+#     docker-compose up -d flybrowser
+#
+#   With monitoring:
+#     docker-compose up -d
+#
+#   Cluster mode: See docker/docker-compose.cluster.yml
+
+version: '3.8'
+
+services:
+  flybrowser:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: flybrowser/flybrowser:latest
+    container_name: flybrowser-service
+    ports:
+      - "8000:8000"
+    environment:
+      # Core settings
+      - FLYBROWSER_ENV=production
+      - FLYBROWSER_HOST=0.0.0.0
+      - FLYBROWSER_PORT=8000
+      - FLYBROWSER_LOG_LEVEL=INFO
+      # Deployment mode (standalone or cluster)
+      - FLYBROWSER_DEPLOYMENT_MODE=standalone
+      # Session settings
+      - FLYBROWSER_MAX_SESSIONS=100
+      - FLYBROWSER_SESSION_TIMEOUT=3600
+      # Browser pool settings
+      - FLYBROWSER_POOL__MIN_SIZE=1
+      - FLYBROWSER_POOL__MAX_SIZE=10
+      - FLYBROWSER_POOL__HEADLESS=true
+      # LLM API keys (from host environment)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - flybrowser-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - flybrowser-network
+
+  # Optional: Redis for caching and session storage
+  redis:
+    image: redis:7-alpine
+    container_name: flybrowser-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - flybrowser-network
+    command: redis-server --appendonly yes
+
+  # Optional: Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: flybrowser-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+    networks:
+      - flybrowser-network
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: flybrowser-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    restart: unless-stopped
+    networks:
+      - flybrowser-network
+    depends_on:
+      - prometheus
+
+networks:
+  flybrowser-network:
+    driver: bridge
+
+volumes:
+  flybrowser-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:

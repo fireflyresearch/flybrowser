@@ -1,0 +1,134 @@
+# FlyBrowser Cluster Docker Compose Configuration
+#
+# This configuration deploys a 3-node FlyBrowser cluster with:
+# - HAProxy load balancer
+# - 3 FlyBrowser nodes with Raft consensus
+# - Prometheus monitoring (optional)
+#
+# Usage:
+#   docker-compose -f docker-compose.cluster.yml up -d
+#
+# Access:
+#   - API: http://localhost:8080
+#   - Node 1: http://localhost:8001
+#   - Node 2: http://localhost:8002
+#   - Node 3: http://localhost:8003
+
+version: '3.8'
+
+services:
+  # Load Balancer
+  haproxy:
+    image: haproxy:2.8-alpine
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - node1
+      - node2
+      - node3
+    networks:
+      - flybrowser-cluster
+    restart: unless-stopped
+
+  # FlyBrowser Node 1 (Bootstrap)
+  node1:
+    image: flybrowser/flybrowser:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      - FLYBROWSER_CLUSTER_ENABLED=true
+      - FLYBROWSER_NODE_ID=node1
+      - FLYBROWSER_API_HOST=0.0.0.0
+      - FLYBROWSER_API_PORT=8000
+      - FLYBROWSER_RAFT_HOST=0.0.0.0
+      - FLYBROWSER_RAFT_PORT=4321
+      - FLYBROWSER_CLUSTER_PEERS=node2:4321,node3:4321
+      - FLYBROWSER_MAX_SESSIONS=10
+    ports:
+      - "8001:8000"
+      - "4321:4321"
+    volumes:
+      - node1-data:/data
+    networks:
+      - flybrowser-cluster
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # FlyBrowser Node 2
+  node2:
+    image: flybrowser/flybrowser:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      - FLYBROWSER_CLUSTER_ENABLED=true
+      - FLYBROWSER_NODE_ID=node2
+      - FLYBROWSER_API_HOST=0.0.0.0
+      - FLYBROWSER_API_PORT=8000
+      - FLYBROWSER_RAFT_HOST=0.0.0.0
+      - FLYBROWSER_RAFT_PORT=4321
+      - FLYBROWSER_CLUSTER_PEERS=node1:4321,node3:4321
+      - FLYBROWSER_MAX_SESSIONS=10
+    ports:
+      - "8002:8000"
+      - "4322:4321"
+    volumes:
+      - node2-data:/data
+    networks:
+      - flybrowser-cluster
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # FlyBrowser Node 3
+  node3:
+    image: flybrowser/flybrowser:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      - FLYBROWSER_CLUSTER_ENABLED=true
+      - FLYBROWSER_NODE_ID=node3
+      - FLYBROWSER_API_HOST=0.0.0.0
+      - FLYBROWSER_API_PORT=8000
+      - FLYBROWSER_RAFT_HOST=0.0.0.0
+      - FLYBROWSER_RAFT_PORT=4321
+      - FLYBROWSER_CLUSTER_PEERS=node1:4321,node2:4321
+      - FLYBROWSER_MAX_SESSIONS=10
+    ports:
+      - "8003:8000"
+      - "4323:4321"
+    volumes:
+      - node3-data:/data
+    networks:
+      - flybrowser-cluster
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+networks:
+  flybrowser-cluster:
+    driver: bridge
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+
