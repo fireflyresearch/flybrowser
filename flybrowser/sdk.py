@@ -918,6 +918,14 @@ class FlyBrowser:
         if self._active_stream_id:
             raise RuntimeError("Stream already active. Stop current stream first.")
         
+        # Convert protocol string to enum FIRST
+        protocol_map = {
+            "hls": StreamingProtocol.HLS,
+            "dash": StreamingProtocol.DASH,
+            "rtmp": StreamingProtocol.RTMP,
+        }
+        stream_protocol = protocol_map.get(protocol.lower(), StreamingProtocol.HLS)
+        
         # Start local HTTP server FIRST to get the port
         if not self._local_stream_server and stream_protocol in [StreamingProtocol.HLS, StreamingProtocol.DASH]:
             await self._start_local_stream_server(stream_dir)
@@ -930,14 +938,6 @@ class FlyBrowser:
                 base_url=base_url,
                 max_concurrent_streams=1
             )
-        
-        # Convert protocol string to enum
-        protocol_map = {
-            "hls": StreamingProtocol.HLS,
-            "dash": StreamingProtocol.DASH,
-            "rtmp": StreamingProtocol.RTMP,
-        }
-        stream_protocol = protocol_map.get(protocol.lower(), StreamingProtocol.HLS)
         
         # Convert codec string to enum
         codec_map = {
