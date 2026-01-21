@@ -183,6 +183,77 @@ print(f"  Bitrate: {metrics.get('current_bitrate', 0):.0f} bps")
 print(f"  Viewers: {metrics.get('viewer_count', 0)}")
 ```
 
+### Playing Streams
+
+#### Quick Play (CLI - Recommended)
+```bash
+# Auto-detect and launch player (ffplay, vlc, or mpv)
+flybrowser stream play SESSION_ID
+
+# Use specific player
+flybrowser stream play SESSION_ID --player ffplay
+flybrowser stream play SESSION_ID --player vlc
+flybrowser stream play SESSION_ID --player mpv
+```
+
+The CLI will automatically:
+1. Get the stream URL
+2. Detect available players (ffplay, vlc, mpv)
+3. Launch the best available player
+
+#### Via FFplay (FFmpeg)
+```bash
+# Get the stream URL first
+stream=$(flybrowser stream url SESSION_ID)
+
+# Play HLS stream
+ffplay -protocol_whitelist file,http,https,tcp,tls,crypto "$stream"
+
+# Or directly
+ffplay -protocol_whitelist file,http,https,tcp,tls,crypto \
+  "http://localhost:8000/streams/STREAM_ID/playlist.m3u8"
+```
+
+#### Via VLC
+```bash
+# macOS
+vlc "http://localhost:8000/streams/STREAM_ID/playlist.m3u8"
+
+# Linux
+vlc "http://localhost:8000/streams/STREAM_ID/playlist.m3u8"
+
+# Or use the GUI: Media -> Open Network Stream
+```
+
+#### Via MPV
+```bash
+mpv "http://localhost:8000/streams/STREAM_ID/playlist.m3u8"
+```
+
+#### Via Web Browser
+```html
+<!-- Using hls.js -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<video id="video" controls width="720"></video>
+<script>
+  const video = document.getElementById('video');
+  const hls = new Hls();
+  hls.loadSource('http://localhost:8000/streams/STREAM_ID/playlist.m3u8');
+  hls.attachMedia(video);
+</script>
+```
+
+#### Python - Get Stream URL
+```python path=null start=null
+# Get the stream URL programmatically
+stream = await browser.start_stream(protocol="hls", quality="medium")
+print(f"Stream URL: {stream['stream_url']}")
+print(f"\nPlay with:")
+print(f"  ffplay: ffplay -protocol_whitelist file,http,https,tcp,tls,crypto '{stream['stream_url']}'")
+print(f"  vlc: vlc '{stream['stream_url']}'")
+print(f"  mpv: mpv '{stream['stream_url']}'")
+```
+
 ### RTMP Streaming
 
 Stream to platforms like Twitch, YouTube, Facebook:

@@ -327,6 +327,44 @@ flybrowser stream url sess_abc123
 vlc $(flybrowser stream url sess_abc123)
 ```
 
+#### stream play
+
+Automatically play a stream with the best available player.
+
+```bash path=null start=null
+flybrowser stream play <SESSION_ID> [OPTIONS]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `SESSION_ID` | Session identifier |
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--endpoint` | `http://localhost:8000` | Server endpoint |
+| `--player` | `auto` | Player to use: `auto`, `ffplay`, `vlc`, `mpv` |
+
+**Example**:
+```bash path=null start=null
+# Auto-detect and launch player
+flybrowser stream play sess_abc123
+
+# Use specific player
+flybrowser stream play sess_abc123 --player ffplay
+flybrowser stream play sess_abc123 --player vlc
+flybrowser stream play sess_abc123 --player mpv
+```
+
+The command will:
+1. Fetch the stream URL
+2. Auto-detect available players (ffplay, vlc, mpv)
+3. Launch the stream in the best available player
+
+Supported players:
+- **ffplay** (from FFmpeg) - Lightweight, command-line
+- **VLC** - Feature-rich, cross-platform
+- **mpv** - Modern, minimal player
+
 ## flybrowser recordings
 
 Manage session recordings.

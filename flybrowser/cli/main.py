@@ -482,6 +482,13 @@ Documentation: https://flybrowser.dev/docs
     stream_url_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
     stream_url_parser.set_defaults(func=cmd_stream_url)
     
+    # stream play
+    stream_play_parser = stream_subparsers.add_parser("play", help="Play a stream (auto-detects player)")
+    stream_play_parser.add_argument("session_id", help="Session ID")
+    stream_play_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    stream_play_parser.add_argument("--player", choices=["auto", "ffplay", "vlc", "mpv"], default="auto", help="Player to use")
+    stream_play_parser.set_defaults(func=cmd_stream_play)
+    
     # recordings command
     recordings_parser = subparsers.add_parser(
         "recordings",
@@ -576,6 +583,82 @@ def cmd_stream_status(args):
         print(json.dumps(result, indent=2))
         return 0
     except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_stream_play(args):
+    """Play a stream with auto-detected player"""
+    import requests
+    import json
+    import subprocess
+    import shutil
+    
+    # Get stream URL first
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/sessions/{args.session_id}/stream/status"
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        result = response.json()
+        
+        # Extract stream URL from nested structure
+        stream_url = None
+        if result.get('urls', {}).get('hls'):
+            stream_url = result['urls']['hls']
+        elif result.get('urls', {}).get('dash'):
+            stream_url = result['urls']['dash']
+        
+        if not stream_url:
+            print("Error: No stream URL found. Is the stream active?")
+            return 1
+        
+        print(f"Stream URL: {stream_url}")
+        
+        # Detect or use specified player
+        player = args.player
+        player_cmd = None
+        
+        if player == "auto":
+            # Try players in order of preference
+            if shutil.which("ffplay"):
+                player = "ffplay"
+            elif shutil.which("vlc"):
+                player = "vlc"
+            elif shutil.which("mpv"):
+                player = "mpv"
+            else:
+                print("Error: No supported player found (ffplay, vlc, mpv)")
+                print("Install one with:")
+                print("  macOS: brew install ffmpeg (for ffplay)")
+                print("         brew install --cask vlc")
+                print("  Linux: sudo apt install ffmpeg vlc mpv")
+                return 1
+        
+        # Build player command
+        if player == "ffplay":
+            player_cmd = [
+                "ffplay",
+                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+                stream_url
+            ]
+        elif player == "vlc":
+            player_cmd = ["vlc", stream_url]
+        elif player == "mpv":
+            player_cmd = ["mpv", stream_url]
+        
+        print(f"\nLaunching {player}...")
+        print(f"Command: {' '.join(player_cmd)}")
+        
+        # Launch player
+        subprocess.run(player_cmd)
+        return 0
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+    except Exception as e:
         print(f"Error: {e}")
         return 1
 
