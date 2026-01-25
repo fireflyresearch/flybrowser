@@ -189,6 +189,66 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
 
+### Token Overflow / Context Length Errors
+
+**Symptoms:**
+- `LLMError: context_length_exceeded`
+- `429 Rate limit exceeded` with TPM (tokens per minute) message
+- Agent fails after extracting large amounts of data
+
+**Solutions:**
+
+1. FlyBrowser automatically handles most overflow scenarios:
+```python
+# The agent automatically:
+# - Limits extractions to 25% of context budget
+# - Truncates individual extractions to 32K chars
+# - Prunes older history when context is full
+```
+
+2. Check content size before extraction:
+```python
+from flybrowser.llm.token_budget import TokenEstimator
+
+# Estimate tokens for large content
+large_content = await page.inner_text("body")
+estimate = TokenEstimator.estimate(large_content)
+print(f"Content: ~{estimate.tokens} tokens ({estimate.content_type.value})")
+
+if estimate.tokens > 50000:
+    # Use more targeted extraction
+    data = await browser.extract("Get only the product names and prices")
+```
+
+3. Use ConversationManager for very large content:
+```python
+from flybrowser.llm.conversation import ConversationManager
+
+manager = ConversationManager(llm_provider)
+result = await manager.send_with_large_content(
+    very_large_html,
+    instruction="Extract all articles",
+    schema={"type": "object", "properties": {...}}
+)
+# Automatically chunks and processes in multiple turns
+```
+
+4. Use more specific extraction instructions:
+```python
+# Instead of extracting entire page
+await browser.extract("Get all text")  # May overflow
+
+# Extract specific sections
+await browser.extract("Get only the main article content")
+```
+
+5. Check model context window:
+```python
+info = llm_provider.get_model_info()
+print(f"Context window: {info.context_window} tokens")
+print(f"Max output: {info.max_output_tokens} tokens")
+```
+
 ## Agent Issues
 
 ### Agent Gets Stuck

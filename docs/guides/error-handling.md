@@ -113,9 +113,36 @@ if not result.success:
         await asyncio.sleep(60)
     elif "token" in error or "context" in error:
         print("Request too large for model context")
+        # FlyBrowser handles this automatically in most cases
+        # For manual control, use ConversationManager:
+        # await conv.send_with_large_content(content, instruction, schema)
     elif "api key" in error:
         print("Invalid or expired API key")
 ```
+
+### Token Overflow Errors
+
+FlyBrowser automatically prevents most token overflow errors, but you can handle edge cases:
+
+```python
+from flybrowser.llm.token_budget import TokenEstimator
+
+# Check content size before extraction
+large_page_content = await browser.extract("get all text content")
+estimate = TokenEstimator.estimate(str(large_page_content.data))
+
+if estimate.tokens > 100000:  # Very large content
+    print(f"Large content detected: ~{estimate.tokens} tokens")
+    # Use chunking or more specific extraction
+    result = await browser.extract(
+        "get only the main article content, excluding navigation and ads"
+    )
+```
+
+The agent's memory system automatically:
+- Limits extraction data to 25% of context budget
+- Truncates individual extractions to max 32K chars
+- Prunes old history entries when context is full
 
 ## Retry Strategies
 

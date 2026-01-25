@@ -201,9 +201,14 @@ flybrowser/
 ├── llm/                # LLM providers
 │   ├── factory.py      # Provider factory
 │   ├── base.py         # Base provider
+│   ├── conversation.py # ConversationManager for multi-turn
+│   ├── token_budget.py # Token estimation and budgeting
+│   ├── chunking.py     # Content chunking strategies
 │   ├── openai.py
 │   ├── anthropic.py
-│   └── ollama.py
+│   ├── gemini.py
+│   ├── ollama.py
+│   └── qwen.py
 ├── service/            # REST API service
 │   ├── app.py          # FastAPI app
 │   └── config.py       # Service config

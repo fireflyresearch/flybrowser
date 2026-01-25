@@ -522,7 +522,7 @@ class MemoryPriority(str, Enum):
 
 ## Token Management
 
-Memory tracks token usage for context window management:
+Memory tracks token usage for context window management, integrated with the `ConversationManager` for sophisticated token budget handling:
 
 ```python
 # Get total tokens in short-term memory
@@ -533,19 +533,65 @@ context = memory.format_for_prompt(domain="example.com")
 # Automatically fits within context_window_budget
 ```
 
-Token estimation per entry:
+### Token Estimation
+
+The `TokenEstimator` class provides content-aware token estimation:
 
 ```python
-def _estimate_tokens(self) -> int:
-    """Estimate token count for this entry."""
-    # Rough estimation: ~4 chars per token
-    total_chars = 0
-    if self.thought and hasattr(self.thought, 'content'):
-        total_chars += len(self.thought.content)
-    total_chars += len(self.action.tool_name) + len(str(self.action.parameters))
-    if self.observation:
-        total_chars += len(self.observation.summary) + len(self.observation.raw_output)
-    return max(1, total_chars // 4)
+from flybrowser.llm.token_budget import TokenEstimator, ContentType
+
+# Estimate tokens for any content
+estimate = TokenEstimator.estimate(text_content)
+print(f"Tokens: {estimate.tokens}")
+print(f"Type: {estimate.content_type.value}")  # TEXT, HTML, JSON, CODE
+print(f"Confidence: {estimate.confidence}")
+
+# Force specific content type
+estimate = TokenEstimator.estimate(content, ContentType.HTML)
+
+# Estimate for message arrays
+tokens = TokenEstimator.estimate_messages(messages)
+```
+
+Content type affects estimation (chars per token):
+- **TEXT**: ~4 chars/token
+- **CODE**: ~3.5 chars/token
+- **JSON**: ~3 chars/token
+- **HTML**: ~2.5 chars/token
+
+### Extraction Budget Management
+
+The memory system automatically limits extraction data to prevent token overflow:
+
+```python
+# In format_for_prompt(), extraction data is limited:
+# - Max 25% of remaining budget for all extractions
+# - Max 32K chars per individual extraction
+# - Smart head/tail truncation for large extractions
+
+max_extraction_budget = remaining_budget // 4  # 25%
+max_single_extraction_chars = min(max_extraction_budget // 2, 32000)
+```
+
+### Integration with ConversationManager
+
+The ReActAgent integrates memory with `ConversationManager` for large context handling:
+
+```python
+# ConversationManager is initialized with model info
+conversation = ConversationManager(
+    llm_provider=llm_provider,
+    model_info=model_info,
+)
+
+# During prompt building, context is checked
+memory_context = memory.format_for_prompt()
+memory_context = agent._check_and_handle_large_context(memory_context)
+
+# If context is too large:
+# 1. Essential sections (goal, current page) are preserved
+# 2. Extraction data is truncated intelligently
+# 3. Older history entries may be pruned
 ```
 
 ## Operation Mode Awareness

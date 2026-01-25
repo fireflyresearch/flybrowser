@@ -649,8 +649,118 @@ Logging levels:
 - `1`: Basic (shows request/response timing)
 - `2`: Detailed (also shows prompts and responses)
 
+## Conversation Management
+
+FlyBrowser includes a sophisticated `ConversationManager` for handling multi-turn conversations and large content that exceeds LLM token limits.
+
+### ConversationManager
+
+The `ConversationManager` handles:
+- Multi-turn conversation history tracking
+- Token budget management to prevent context overflow
+- Large content chunking and multi-turn processing
+- Structured output preservation across turns
+
+```python
+from flybrowser.llm.conversation import ConversationManager
+
+# Initialize with an LLM provider
+manager = ConversationManager(llm_provider)
+
+# Set system prompt
+manager.set_system_prompt("You are a helpful assistant.")
+
+# Simple structured request
+response = await manager.send_structured(
+    "What is the capital of France?",
+    schema={"type": "object", "properties": {"answer": {"type": "string"}}}
+)
+
+# Handle large content automatically
+response = await manager.send_with_large_content(
+    large_html_content,
+    instruction="Extract all product names",
+    schema=product_schema
+)
+```
+
+### Token Budget Management
+
+The `TokenBudgetManager` tracks and allocates tokens across conversation turns:
+
+```python
+from flybrowser.llm.token_budget import TokenBudgetManager, TokenEstimator
+
+# Estimate tokens for content
+estimate = TokenEstimator.estimate(content)
+print(f"Tokens: {estimate.tokens}, Type: {estimate.content_type.value}")
+
+# Check if content fits
+manager = TokenBudgetManager(context_window=128000, max_output_tokens=8192)
+if manager.can_fit(content):
+    # Process content
+    ...
+else:
+    # Need to chunk or summarize
+    ...
+```
+
+### Content Chunking
+
+For content that exceeds token limits, FlyBrowser provides intelligent chunking:
+
+```python
+from flybrowser.llm.chunking import SmartChunker, get_chunker, ContentType
+
+# Auto-detect content type and chunk appropriately
+chunker = SmartChunker()
+chunks = chunker.chunk(large_content, max_tokens_per_chunk=4000)
+
+# Or use specific chunker for known content types
+html_chunker = get_chunker(ContentType.HTML)
+json_chunker = get_chunker(ContentType.JSON)
+```
+
+Chunking strategies:
+- **TextChunker**: Splits at paragraph/sentence boundaries
+- **HTMLChunker**: Preserves DOM structure, splits at block elements
+- **JSONChunker**: Maintains valid JSON structure
+- **SmartChunker**: Auto-detects content type
+
+### Multi-Turn Accumulation Protocol
+
+For very large content, the `ConversationManager` implements a multi-turn accumulation protocol:
+
+1. **Single Turn**: If content fits, send as single request
+2. **Accumulation Phase**: Split content into chunks, extract key points from each
+3. **Synthesis Phase**: Combine key points into final structured output
+
+```python
+# This happens automatically when content is too large
+response = await manager.send_with_large_content(
+    very_large_html,  # 200K+ chars
+    instruction="Summarize all the articles",
+    schema={"type": "object", "properties": {"summaries": {"type": "array"}}}
+)
+# Manager automatically chunks, processes, and synthesizes
+```
+
+### Integration with ReActAgent
+
+The ReActAgent automatically uses `ConversationManager` for context management:
+
+```python
+# ConversationManager is initialized automatically
+agent = ReActAgent(page, llm_provider, tool_registry, memory)
+
+# During execution, large extraction data is handled automatically
+# The agent's _check_and_handle_large_context() method uses the
+# ConversationManager to truncate context when needed
+```
+
 ## See Also
 
 - [Architecture Overview](overview.md) - System architecture
+- [Memory System](memory.md) - Memory management and context
 - [Configuration Reference](../reference/configuration.md) - Configuration options
 - [Agent Feature](../features/agent.md) - How agents use LLMs
