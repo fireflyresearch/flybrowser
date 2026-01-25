@@ -194,6 +194,34 @@ ollama pull qwen3:8b
 browser = FlyBrowser(llm_provider="ollama", llm_model="qwen3:8b")
 ```
 
+### Qwen (Alibaba Cloud DashScope)
+
+Qwen models are available through Alibaba Cloud's DashScope service:
+
+1. Create an account at [DashScope Console](https://dashscope.console.aliyun.com/)
+2. Generate an API key from the API Keys section
+3. Set the environment variable or pass directly:
+
+```bash
+export DASHSCOPE_API_KEY="sk-..."  # or QWEN_API_KEY
+```
+
+```python
+browser = FlyBrowser(llm_provider="qwen", api_key="sk-...")
+```
+
+Qwen supports multiple regions. For international access:
+
+```python
+browser = FlyBrowser(
+    llm_provider="qwen",
+    llm_model="qwen-plus",
+    region="international",  # or "us" for US region
+)
+```
+
+Available models include: `qwen-plus`, `qwen-turbo`, `qwen-max`, `qwen3-235b-a22b`, and vision models `qwen-vl-max`, `qwen-vl-plus`.
+
 ## Verifying Installation
 
 After installation, verify everything works:

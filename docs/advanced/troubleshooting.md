@@ -268,6 +268,72 @@ print(observation)
 
 3. Check for overlapping elements or iframes
 
+### Modal/Popup Blocking Clicks
+
+**Symptoms:**
+- `ElementNotFound: Element intercepted by another element`
+- Click fails with "covered by" error
+- Newsletter or cookie popup appears mid-task
+
+**Solutions:**
+
+1. The agent auto-recovers from intercepted clicks:
+```python
+# Agent automatically detects and dismisses blocking popups
+result = await browser.agent("Click the checkout button")
+# If a popup appears, agent handles it and retries
+```
+
+2. Force obstacle detection before action:
+```python
+# Manually wait for potential dynamic content
+await asyncio.sleep(2)  # Allow time for JavaScript popups to appear
+result = await browser.act("Click the button")
+```
+
+3. Check logs for obstacle detection:
+```python
+import logging
+logging.getLogger("flybrowser.agents").setLevel(logging.DEBUG)
+# Look for: [DynamicObstacle] ✓ Handled X obstacle(s)
+```
+
+### Dynamic Popups Not Being Dismissed
+
+**Symptoms:**
+- Newsletter popups keep appearing
+- Cookie banners not automatically handled
+- JavaScript-triggered modals block interaction
+
+**Solutions:**
+
+1. Check if obstacle detection is enabled (default: on):
+```python
+# Obstacle detection happens automatically before each screenshot
+# and on click failures - no configuration needed
+```
+
+2. Verify the popup type is supported:
+```
+# Supported newsletter tools: MailPoet, Mailchimp, HubSpot, Klaviyo
+# Supported consent tools: OneTrust, CookieBot, Quantcast, Termly
+# Supported modal frameworks: Bootstrap, MUI, React-Modal, Ant Design
+```
+
+3. Check detection confidence in logs:
+```python
+import logging
+logging.getLogger("flybrowser.agents.obstacle_detector").setLevel(logging.DEBUG)
+# Look for: [QuickCheck] confidence=X.XX
+# Popups are handled if confidence > 0.3
+```
+
+4. If popup uses non-standard implementation:
+```python
+# Use explicit act() instruction
+await browser.act("Click the X button to close the popup")
+```
+
 ## Navigation Issues
 
 ### Page Not Loading
@@ -426,7 +492,26 @@ logging.basicConfig(level=logging.DEBUG)
 # Or specific modules
 logging.getLogger("flybrowser").setLevel(logging.DEBUG)
 logging.getLogger("flybrowser.agents").setLevel(logging.DEBUG)
+logging.getLogger("flybrowser.agents.obstacle_detector").setLevel(logging.DEBUG)
 ```
+
+### Debug Vision Behavior
+
+Check why screenshots are or aren't being captured:
+
+```python
+import logging
+logging.getLogger("flybrowser.agents.react_agent").setLevel(logging.DEBUG)
+
+# Look for these log messages:
+# [VISION] Skipped: page is blank (about:blank)  - Expected on first iteration
+# [VISION:MODE] Trigger: reason                   - Screenshot being captured
+# [DynamicObstacle] ✓ Handled N obstacle(s)       - Popup dismissed
+```
+
+**Note on Blank Page Vision Skip:**
+Screenshots are automatically skipped for `about:blank` pages to save resources.
+This is normal behavior on the first iteration before navigation.
 
 ### Inspect Page State
 

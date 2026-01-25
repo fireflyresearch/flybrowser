@@ -6,7 +6,7 @@ FlyBrowser provides a unified interface for multiple LLM providers. This documen
 
 The LLM integration system provides:
 
-- Unified API across all providers (OpenAI, Anthropic, Ollama, Gemini)
+- Unified API across all providers (OpenAI, Anthropic, Ollama, Gemini, Qwen)
 - Vision/multimodal support with single and multiple images
 - Streaming response support
 - Tool/function calling support
@@ -25,13 +25,13 @@ The LLM integration system provides:
 │                           │                                     │
 │   ┌───────────────────────┼───────────────────────┐             │
 │   │           │           │           │           │             │
-│   ▼           ▼           ▼           ▼           ▼             │
-│ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐     │
-│ │ OpenAI  │ │Anthropic│ │ Ollama  │ │ Gemini  │ │ Custom  │     │
-│ │Provider │ │Provider │ │Provider │ │Provider │ │Provider │     │
-│ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘     │
-│      │           │           │           │           │          │
-│      └───────────┴───────────┴───────────┴───────────┘          │
+│   ▼           ▼           ▼           ▼           ▼           ▼ │
+│ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌───────┐
+│ │ OpenAI  │ │Anthropic│ │ Ollama  │ │ Gemini  │ │  Qwen   │ │Custom │
+│ │Provider │ │Provider │ │Provider │ │Provider │ │Provider │ │Provider│
+│ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └───┬───┘
+│      │           │           │           │           │           │  │
+│      └───────────┴───────────┴───────────┴───────────┴───────────┘  │
 │                              │                                  │
 │                              ▼                                  │
 │                    ┌─────────────────┐                          │
@@ -269,6 +269,45 @@ provider = LLMProviderFactory.create(
     api_key="...",
 )
 ```
+
+### Qwen (Alibaba Cloud)
+
+Qwen models are accessed via Alibaba Cloud's DashScope service, which provides an OpenAI-compatible API:
+
+```python
+provider = LLMProviderFactory.create(
+    provider="qwen",  # or "dashscope"
+    model="qwen-plus",  # or qwen-turbo, qwen-max, qwen3-235b-a22b
+    api_key="sk-...",  # DashScope API key
+)
+```
+
+Qwen supports multiple regions:
+
+```python
+# Default (China mainland)
+provider = LLMProviderFactory.create(
+    provider="qwen",
+    model="qwen-plus",
+    region="default",
+)
+
+# International
+provider = LLMProviderFactory.create(
+    provider="qwen",
+    model="qwen-plus",
+    region="international",
+)
+
+# US region
+provider = LLMProviderFactory.create(
+    provider="qwen",
+    model="qwen-plus",
+    region="us",
+)
+```
+
+Qwen vision models (qwen-vl-max, qwen-vl-plus) are automatically detected and support image inputs.
 
 ## Provider Factory
 
@@ -559,6 +598,7 @@ Default models per provider:
 | Anthropic | claude-sonnet-4-5-20250929 |
 | Ollama | qwen3:8b |
 | Gemini | gemini-2.0-flash |
+| Qwen | qwen-plus |
 
 ## Custom Providers
 

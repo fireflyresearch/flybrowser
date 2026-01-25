@@ -33,6 +33,14 @@ stream = await browser.start_stream(protocol="hls", quality="high")
 - [Quick Start](#quick-start)
   - [Installation](#installation)
   - [Your First Automation](#your-first-automation)
+- [Stealth Mode](#stealth-mode)
+  - [Fingerprint Generation](#fingerprint-generation)
+  - [CAPTCHA Solving](#captcha-solving)
+  - [Proxy Network](#proxy-network)
+- [Observability](#observability)
+  - [Command Logging](#command-logging)
+  - [Live View](#live-view)
+  - [Completion Page](#completion-page)
 - [Streaming & Recording](#streaming--recording)
 - [ReAct Agent Architecture](#react-agent-architecture)
   - [Core ReAct Loop](#core-react-loop)
@@ -77,13 +85,15 @@ stream = await browser.start_stream(protocol="hls", quality="high")
 ## Key Features
 
 - **Natural Language Control**: Describe actions in plain English—FlyBrowser figures out the details
+- **Stealth Mode**: Fingerprint generation, CAPTCHA solving, and intelligent proxy network for anti-detection
 - **Live Streaming & Recording**: Stream browser sessions in real-time (HLS/DASH/RTMP) with professional codecs
 - **Smart Validators**: 99.8% success rate with automatic response validation and self-correction
 - **Intelligent Result Selection**: Multi-factor scoring automatically chooses the best option—not just the first result
 - **PII Protection**: Secure credential handling that never exposes passwords to LLMs
 - **Multi-Deployment**: Run embedded in scripts, as a standalone server, or in a distributed cluster
 - **Hardware Acceleration**: NVENC, VideoToolbox, QSV support for high-performance encoding
-- **Built-in Observability**: Detailed timing breakdowns, metrics, and health monitoring
+- **Built-in Observability**: Command logging, source capture, and Live View iFrame for monitoring
+- **Interactive Completion Page**: Visual task summary with JSON tree explorer, reasoning timeline, and LLM metrics
 - **Cost Tracking**: Per-request LLM usage stats (tokens, cost) with `return_metadata=True`
 
 ---
@@ -185,6 +195,186 @@ flybrowser setup jupyter install
 jupyter notebook
 # Select "FlyBrowser" kernel, use await directly!
 ```
+
+---
+
+## Stealth Mode
+
+FlyBrowser provides state-of-the-art stealth capabilities for bypassing bot detection:
+
+```python
+from flybrowser import FlyBrowser
+from flybrowser.stealth import StealthConfig
+
+async with FlyBrowser(
+    llm_provider="openai",
+    api_key="sk-...",
+    stealth_config=StealthConfig(
+        fingerprint_enabled=True,
+        captcha_enabled=True,
+        captcha_provider="2captcha",
+        captcha_api_key="your-key",
+        proxy_enabled=True,
+        geolocation="us-west",
+    ),
+) as browser:
+    await browser.goto("https://protected-site.com")
+    result = await browser.agent("Complete the signup form")
+```
+
+### Fingerprint Generation
+
+Generate consistent browser fingerprints that pass detection:
+
+```python
+config = StealthConfig(
+    fingerprint_enabled=True,
+    os="macos",           # windows, macos, linux
+    browser="chrome",      # chrome, firefox, safari
+    geolocation="japan",   # Timezone, language auto-matched
+)
+```
+
+**Fingerprint Components:**
+- User Agent, Screen Resolution, Timezone, Language
+- WebGL, Canvas, Audio fingerprints
+- Fonts, Plugins, Hardware info
+
+### CAPTCHA Solving
+
+Automatic CAPTCHA solving with multiple providers:
+
+```python
+config = StealthConfig(
+    captcha_enabled=True,
+    captcha_provider="2captcha",  # 2captcha, anticaptcha, capsolver
+    captcha_api_key="your-key",
+    captcha_auto_solve=True,
+)
+```
+
+**Supported CAPTCHAs:** reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile, FunCaptcha
+
+### Proxy Network
+
+Intelligent proxy selection with premium providers:
+
+```python
+from flybrowser.stealth import StealthConfig, ProxyNetworkConfig, ProviderConfig
+
+config = StealthConfig(
+    proxy_network=ProxyNetworkConfig(
+        providers=[
+            ProviderConfig(
+                provider="bright_data",
+                username="user",
+                password="pass",
+                zone="residential",
+            ),
+        ],
+        strategy="smart",  # AI-powered selection
+    ),
+)
+```
+
+**Providers:** Bright Data, Oxylabs, Smartproxy  
+**Proxy Types:** Residential, Datacenter, Mobile, ISP
+
+See [Stealth Documentation](docs/features/stealth.md) for full details.
+
+---
+
+## Observability
+
+Comprehensive observability for monitoring and debugging:
+
+```python
+from flybrowser import FlyBrowser
+from flybrowser.observability import ObservabilityConfig
+
+async with FlyBrowser(
+    llm_provider="openai",
+    api_key="sk-...",
+    observability_config=ObservabilityConfig(
+        enable_command_logging=True,
+        enable_source_capture=True,
+        enable_live_view=True,
+        live_view_port=8765,
+    ),
+) as browser:
+    # Live view available at ws://localhost:8765
+    print(f"Live View: {browser.get_live_view_url()}")
+    
+    await browser.goto("https://example.com")
+    result = await browser.extract("Get the data")
+    
+    # Export all captured data
+    browser.export_observability("./output/")
+```
+
+### Command Logging
+
+Track all operations with structured logging:
+
+```python
+config = ObservabilityConfig(
+    enable_command_logging=True,
+    log_llm_prompts=True,
+    log_llm_responses=True,
+)
+```
+
+**Features:** Full operation history, LLM prompt/response logging, error capture, export to JSON/SQLite
+
+### Live View
+
+Embed real-time browser view in your dashboard:
+
+```python
+from flybrowser.observability import ObservabilityConfig, ControlMode
+
+config = ObservabilityConfig(
+    enable_live_view=True,
+    live_view_port=8765,
+    live_view_control_mode=ControlMode.VIEW_ONLY,  # or INTERACT
+)
+
+# Embed in your dashboard
+# <iframe src="http://localhost:8765/embed"></iframe>
+```
+
+**Features:** WebSocket streaming, iFrame embedding, optional viewer control, authentication support
+
+### Completion Page
+
+In non-headless mode, the browser displays an interactive completion page after `agent()` tasks:
+
+```python
+browser = FlyBrowser(
+    llm_provider="openai",
+    api_key="sk-...",
+    headless=False,  # Show browser and completion page
+)
+
+async with browser:
+    result = await browser.agent("Find the best deal and add to cart")
+    # Browser now shows completion page with:
+    # - Metrics: duration, iterations, tokens, cost
+    # - LLM usage breakdown and tool execution timeline
+    # - Interactive JSON tree explorer for results
+    # - Reasoning steps visualization (thought → action)
+```
+
+**Features:**
+- **Metrics Row**: Duration, iterations used, total tokens, estimated cost
+- **Expandable Sections**: LLM usage details (model, provider, API calls, latency), tools executed with timing and success status, reasoning steps timeline
+- **JSON Tree Explorer**: Interactive, collapsible view for exploring complex nested results
+- **View Toggle**: Switch between tree view and syntax-highlighted raw JSON with copy to clipboard
+- **Error Display**: Clear error message with optional stack trace (on failure)
+- **Metadata Footer**: Session ID, reasoning strategy, stop reason for debugging
+- **Robust Rendering**: Multi-layer data validation ensures the page never fails to render
+
+See [Observability Documentation](docs/features/observability.md) for full details.
 
 ---
 
@@ -311,7 +501,7 @@ ReActBrowserAgent (sdk_integration.py)
     │   ├── Interaction: ClickTool, TypeTool, ScrollTool, HoverTool, PressKeyTool, SelectOptionTool, etc.
     │   ├── Extraction: ExtractTextTool, ScreenshotTool, GetPageStateTool
     │   ├── Exploration: PageExplorerTool
-    │   ├── Search: SearchAPITool, SearchHumanTool, SearchHumanAdvancedTool, SearchRankTool
+    │   ├── Search: SearchAgentTool (primary), SearchHumanTool (fallback), SearchRankTool
     │   └── System: CompleteTool, FailTool, WaitTool, AskUserTool
     ├── ReActAgent (react_agent.py)
     │   ├── TaskPlanner - Complex task planning
@@ -376,7 +566,7 @@ from flybrowser.agents.tools import (
     # Extraction tools
     ExtractTextTool, ScreenshotTool, GetPageStateTool,
     # Search tools
-    SearchAPITool, SearchHumanTool, SearchHumanAdvancedTool, SearchRankTool,
+    SearchAgentTool, SearchHumanTool, SearchRankTool,
     # Exploration tools
     PageExplorerTool,
     # System tools
@@ -388,21 +578,41 @@ from flybrowser.agents.tools import (
 
 ### Automatic Obstacle Handling
 
-**PageAnalyzer** tool detects and handles page obstacles:
+FlyBrowser implements **state-of-the-art two-phase obstacle detection** that handles modals, popups, and overlays—including those that appear dynamically via JavaScript **after** initial page load:
 
 ```python
-# Automatic obstacle detection
+# Automatic obstacle detection - works transparently
 result = await browser.extract("Get product prices")
-# Automatically handles cookie banners, modals, popups
+# Handles cookie banners, modals, newsletter popups - even if they appear mid-task
+
+# Auto-recovery when clicks are blocked by popups
+await browser.act("Click the checkout button")
+# If a popup intercepts the click, agent dismisses it and retries
+```
+
+**Two-Phase Detection Architecture:**
+```
+Phase 1: Quick DOM Check (~10ms, no LLM call)
+├── Multi-point viewport sampling (5 positions)
+├── ARIA role detection (dialog, alertdialog)
+├── Framework modal detection (Bootstrap, MUI, React-Modal)
+├── Newsletter tool detection (MailPoet, Mailchimp, HubSpot, Klaviyo)
+└── Consent tool detection (OneTrust, CookieBot, Quantcast, Termly)
+                    ↓ (confidence > 0.3)
+Phase 2: VLM Analysis + Dismissal (~2-5s)
+├── Screenshot capture and AI analysis
+├── Multi-strategy dismissal (text > ARIA > coordinates)
+└── Verification and cooldown (3s to prevent loops)
 ```
 
 **Supported Obstacle Types:**
-- Cookie consent banners (GDPR, CCPA)
-- Modal dialogs and popups
-- Newsletter subscription overlays
+- Cookie consent banners (GDPR, CCPA) - OneTrust, CookieBot, Quantcast, Termly
+- Modal dialogs and popups - Bootstrap, MUI, Ant Design, React-Modal
+- Newsletter subscription overlays - MailPoet, Mailchimp, HubSpot, Klaviyo
 - Age verification gates
 - Login walls and paywalls
 - Chat widgets and help dialogs
+- **JavaScript-triggered popups** that appear after page load
 
 ### Reasoning Strategies
 
@@ -453,34 +663,45 @@ result = await browser.agent(
 
 ### Search Capabilities
 
-**Multi-Engine Search** with intelligent ranking:
+**Multi-Provider API Search** with intelligent ranking:
 
 ```python
-# Simple search
-result = await browser.search("Python async tutorials")
-
-# Multi-engine with options
-result = await browser.search(
-    "AI research papers",
-    engine="duckduckgo",  # google, bing, duckduckgo
-    max_results=10,
-    date_range="past_month"
+# Configure search provider (or use environment variables)
+browser = FlyBrowser(
+    llm_provider="openai",
+    search_provider="serper",  # serper, google, bing, auto
+    search_api_key="your-api-key",
 )
 
-# Search with exploration
-result = await browser.search(
-    "Startup company info",
-    explore=True,
-    goal="Find company description and pricing"
+# Simple search
+results = await browser.search("Python async tutorials")
+
+# Search with options
+results = await browser.search(
+    "AI developments",
+    search_type="news",      # auto, web, images, news, videos, places, shopping
+    ranking="freshness",      # auto, balanced, relevance, freshness, authority
+    max_results=20,
+)
+
+# Access results
+for item in results.data["results"]:
+    print(f"{item['title']}: {item['url']}")
+
+# Runtime configuration
+browser.configure_search(
+    ranking_weights={"freshness": 0.5},
+    cache_ttl_seconds=600,
 )
 ```
 
 **Search Features:**
-- Multi-Engine Support: Google, Bing, DuckDuckGo
-- Query Optimization: LLM-powered query enhancement
-- Result Ranking: Multi-factor scoring (relevance, quality, authority)
-- Deep Exploration: Navigate to results and extract content
-- Pagination: Automatic multi-page handling
+- Multi-Provider API: Serper.dev (recommended), Google Custom Search, Bing
+- Intelligent Ranking: BM25 relevance, freshness, domain authority
+- Intent Detection: LLM-powered query analysis for search type
+- Browser Fallback: Human-like search when API unavailable
+- Result Caching: Configurable TTL for performance
+- ReAct Integration: Automatic search in autonomous tasks
 
 ### Response Validation
 
@@ -932,9 +1153,12 @@ curl -X DELETE http://localhost:8000/sessions/sess_abc123 \
 | [Agent](docs/features/agent.md) | Multi-step autonomous tasks |
 | [Observe](docs/features/observe.md) | Find and analyze page elements |
 | [Navigation](docs/features/navigation.md) | URL and natural language navigation |
+| [Obstacle Detection](docs/features/obstacle-detection.md) | Automatic popup/modal dismissal |
 | [Screenshots](docs/features/screenshots.md) | Capture and compare screenshots |
 | [Streaming](docs/features/streaming.md) | Real-time action streaming |
 | [PII Handling](docs/features/pii.md) | Secure credential management |
+| [Stealth Mode](docs/features/stealth.md) | Fingerprint, CAPTCHA, proxy network |
+| [Observability](docs/features/observability.md) | Logging, capture, live view |
 
 ### Guides
 | Guide | Description |
@@ -1074,6 +1298,22 @@ browser = FlyBrowser(
 )
 ```
 
+### Qwen AI (Alibaba Cloud)
+```python
+browser = FlyBrowser(
+    llm_provider="qwen",
+    llm_model="qwen-plus",  # Or: qwen-turbo, qwen-max, qwen3-235b-a22b
+    api_key="sk-..."  # DashScope API key
+)
+
+# With vision capabilities
+browser = FlyBrowser(
+    llm_provider="qwen",
+    llm_model="qwen-vl-max",  # Vision-language model
+    api_key="sk-..."
+)
+```
+
 ### Local LLMs (Ollama)
 ```bash
 ollama serve
@@ -1090,6 +1330,7 @@ browser = FlyBrowser(
 - OpenAI (GPT-5.2, GPT-5-mini, GPT-4o)
 - Anthropic (Claude 4.5, Claude 3.5)
 - Google Gemini (Gemini 2.0, Gemini 1.5)
+- **Qwen AI (Qwen3, Qwen-Plus, Qwen-VL)**
 - Ollama (Qwen3, Llama 3.2, Gemma 3)
 - Any OpenAI-compatible endpoint
 

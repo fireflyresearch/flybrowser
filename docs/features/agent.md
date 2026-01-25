@@ -198,9 +198,46 @@ if result.execution:
 The agent adapts when things don't go as expected:
 
 - Retries failed actions with different approaches
-- Handles unexpected popups and obstacles
+- Handles unexpected popups and obstacles (including JavaScript-triggered modals)
 - Adjusts plan when encountering blockers
 - Provides alternative suggestions on failures
+- Auto-recovery when clicks are intercepted by overlays
+
+### Dynamic Obstacle Handling
+
+The agent automatically detects and dismisses obstacles that appear dynamically via JavaScript **after** initial page load:
+
+```python
+# Obstacles handled automatically during execution:
+# - Newsletter signup popups (MailPoet, Mailchimp, HubSpot, Klaviyo)
+# - Cookie consent banners (OneTrust, CookieBot, Quantcast, Termly)
+# - Modal dialogs (Bootstrap, MUI, React-Modal, Ant Design)
+# - Age verification gates
+# - Promotional overlays
+
+result = await browser.agent(
+    task="Add the first product to cart and checkout"
+)
+# Agent automatically dismisses popups that appear during the task
+```
+
+**Two-Phase Detection:**
+1. **Quick DOM Check** (~10ms): Multi-point sampling detects obstacles without LLM calls
+2. **VLM Analysis** (if needed): AI-driven dismissal strategies when confidence > 0.3
+
+**Auto-Recovery on Click Failures:**
+When a click fails because another element intercepts it (common with popups), the agent automatically:
+1. Detects the blocking obstacle
+2. Dismisses it using appropriate strategies
+3. Retries the original click
+
+```python
+# This works even when a newsletter popup appears mid-task
+result = await browser.agent(
+    task="Click the 'Add to Cart' button"
+)
+# If popup blocks the click, agent dismisses it and retries
+```
 
 ## Return Values
 
@@ -243,6 +280,106 @@ llm = result.llm_usage
 print(f"Total tokens: {llm.total_tokens}")
 print(f"Cost: ${llm.cost_usd:.4f}")
 ```
+
+## Completion Page
+
+When running in non-headless mode, the browser displays an interactive **Completion Page** after task execution. This provides a visual summary of the agent's work.
+
+### Completion Page Features
+
+**Metrics Overview:**
+- **Duration**: Total execution time (formatted as ms, seconds, or minutes)
+- **Iterations**: ReAct cycles used vs. maximum allowed
+- **Tokens**: Total LLM tokens consumed (prompt + completion)
+- **Cost**: Estimated LLM cost in USD
+
+**Expandable Sections:**
+- **LLM Usage Details**: Model name, provider, token breakdown (prompt/completion), API call count, average latency
+- **Tools Executed**: Complete list of all tools invoked with individual durations and success/failure status
+- **Reasoning Steps**: Timeline showing each thought → action pair in sequence
+
+**Result Data Explorer:**
+- **Tree View**: Interactive, collapsible JSON tree for exploring complex nested results
+- **Raw View**: Syntax-highlighted JSON with proper indentation
+- One-click toggle between views
+- Deep nesting auto-collapsed for readability
+- Copy to clipboard functionality
+
+**Metadata Footer:**
+- Session ID for debugging and tracing
+- Reasoning strategy used (react_standard, planning, etc.)
+- Stop reason (completed, max_iterations, timeout, error)
+
+**Error Display (on failure):**
+- Clear error message
+- Optional stack trace for debugging
+
+### Example Completion Page
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ✓ AGENT COMPLETED SUCCESSFULLY                             │
+│  Task: Find the cheapest laptop and add to cart             │
+├─────────────────────────────────────────────────────────────┤
+│  Duration     Iterations     Tokens      Cost               │
+│  12.4s        8/50           2,450       $0.0024            │
+├─────────────────────────────────────────────────────────────┤
+│  ▼ LLM Usage Details                                        │
+│    Model: gpt-4o | Provider: openai                         │
+│    Prompt: 1,820 | Completion: 630 | Latency: 1.2s          │
+├─────────────────────────────────────────────────────────────┤
+│  ▼ Tools Executed (8)                                       │
+│    navigate (1.2s) → click (0.3s) → extract (2.1s) → ...    │
+├─────────────────────────────────────────────────────────────┤
+│  ▼ Reasoning Steps                                          │
+│    1. "Navigate to laptops" → navigate                      │
+│    2. "Sort by price" → click                               │
+│    3. "Find cheapest" → extract                             │
+├─────────────────────────────────────────────────────────────┤
+│  Result Data  [Tree] [Raw]                                  │
+│  ▼ {                                                        │
+│      "product": "Laptop Pro 15"                             │
+│      "price": 449.99                                        │
+│      "added_to_cart": true                                  │
+│    }                                                        │
+├─────────────────────────────────────────────────────────────┤
+│  Session: sess_abc123 | Strategy: completed | Stop: success │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Viewing the Completion Page
+
+The completion page appears automatically when:
+- Running with `headless=False`
+- Using embedded mode (not server mode)
+- The `agent()` method completes (success or failure)
+
+```python
+# Completion page will be visible in the browser window
+browser = FlyBrowser(
+    llm_provider="openai",
+    api_key="sk-...",
+    headless=False,  # Show browser window
+)
+
+async with browser:
+    await browser.goto("https://shop.example.com")
+    result = await browser.agent("Add the cheapest item to cart")
+    # Completion page now visible in browser
+    # User can explore the JSON tree, review steps, etc.
+```
+
+### Data Extraction & Robustness
+
+The completion page handles various data formats safely:
+
+- **ReActStep objects**: Extracts thought, action, observation, duration
+- **Dictionary representations**: Handles serialized step data
+- **Missing fields**: Gracefully handles incomplete data with sensible defaults
+- **LLM usage**: Normalizes token counts, costs, and latency metrics
+- **Error cases**: Displays error messages and optional stack traces
+
+The page will never fail to render due to missing or malformed data—all fields use defensive defaults.
 
 ## Error Handling
 
@@ -339,10 +476,11 @@ else:
 ## Operation Mode
 
 The `agent()` method uses `RESEARCH` operation mode, optimized for:
-- Adaptive vision based on task needs
-- Smart page exploration
+- Adaptive vision based on task needs (skips blank pages automatically)
+- Smart page exploration with dynamic obstacle detection
 - Comprehensive memory for complex workflows
 - Autonomous planning and replanning
+- Auto-recovery from intercepted clicks and blocked interactions
 
 ## Comparison with Other Methods
 

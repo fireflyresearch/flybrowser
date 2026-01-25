@@ -26,6 +26,8 @@ FlyBrowser(
     log_verbosity: str = "normal",
     agent_config: AgentConfig | None = None,
     config_file: str | None = None,
+    stealth_config: StealthConfig | None = None,
+    observability_config: ObservabilityConfig | None = None,
 )
 ```
 
@@ -49,6 +51,8 @@ FlyBrowser(
 | `log_verbosity` | `str` | `"normal"` | silent, minimal, normal, verbose, debug |
 | `agent_config` | `AgentConfig \| None` | `None` | Custom agent configuration |
 | `config_file` | `str \| None` | `None` | Path to YAML/JSON config file |
+| `stealth_config` | `StealthConfig \| None` | `None` | Stealth configuration for fingerprint, CAPTCHA, proxy |
+| `observability_config` | `ObservabilityConfig \| None` | `None` | Observability for logging, capture, live view |
 
 #### Example
 
@@ -72,6 +76,25 @@ browser = FlyBrowser(
     llm_provider="anthropic",
     api_key="sk-ant-...",
     agent_config=config,
+)
+
+# With stealth and observability
+from flybrowser.stealth import StealthConfig
+from flybrowser.observability import ObservabilityConfig
+
+browser = FlyBrowser(
+    llm_provider="openai",
+    api_key="sk-...",
+    stealth_config=StealthConfig(
+        fingerprint_enabled=True,
+        captcha_enabled=True,
+        captcha_provider="2captcha",
+        captcha_api_key="key",
+    ),
+    observability_config=ObservabilityConfig(
+        enable_command_logging=True,
+        enable_live_view=True,
+    ),
 )
 ```
 
@@ -265,6 +288,17 @@ Execute autonomous multi-step tasks.
 | `max_time_seconds` | `float` | `1800.0` | Time limit |
 | `return_metadata` | `bool` | `True` | Return full response |
 
+**Completion Page:** In non-headless mode, displays an interactive completion page with:
+- Metrics (duration, iterations, tokens, cost)
+- LLM usage details (model, provider, token counts, API calls, latency)
+- Tools executed with individual timings and success/failure status
+- Reasoning steps visualization (thought → action timeline)
+- Interactive JSON tree explorer for complex nested results
+- Session metadata, strategy, and stop reason
+- Error display with optional stack trace (on failure)
+
+The completion page uses multi-layer data validation and will never fail to render due to missing or malformed data.
+
 ```python
 result = await browser.agent(
     "Find the cheapest flight to Tokyo and extract the price"
@@ -288,6 +322,91 @@ Execute a complex task with ReAct reasoning.
 ```python
 result = await browser.execute_task(
     "Go to google.com and search for 'python tutorials'"
+)
+```
+
+---
+
+## Search
+
+### search()
+
+```python
+async def search(
+    query: str,
+    search_type: str = "auto",
+    max_results: int = 10,
+    ranking: str = "auto",
+    return_metadata: bool = True
+) -> AgentRequestResponse | dict
+```
+
+Perform a web search using the configured search provider.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | `str` | Required | Search query or natural language instruction |
+| `search_type` | `str` | `"auto"` | Type: auto, web, images, news, videos, places, shopping |
+| `max_results` | `int` | `10` | Maximum results (1-50) |
+| `ranking` | `str` | `"auto"` | Ranking: auto, balanced, relevance, freshness, authority |
+| `return_metadata` | `bool` | `True` | Return full response object |
+
+**Returns:** Search results with ranked items, answer boxes, and related searches.
+
+```python
+# Simple search
+results = await browser.search("Python tutorials")
+
+# News search with freshness ranking
+news = await browser.search(
+    "AI developments",
+    search_type="news",
+    ranking="freshness",
+    max_results=20,
+)
+
+# Process results
+for item in results.data["results"]:
+    print(f"{item['title']}: {item['url']}")
+```
+
+### configure_search()
+
+```python
+def configure_search(
+    provider: str | None = None,
+    api_key: str | None = None,
+    enable_ranking: bool | None = None,
+    ranking_weights: dict[str, float] | None = None,
+    cache_ttl_seconds: int | None = None
+) -> None
+```
+
+Configure search settings at runtime.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `provider` | `str` | `None` | Provider: serper, google, bing, auto |
+| `api_key` | `str` | `None` | API key for the provider |
+| `enable_ranking` | `bool` | `None` | Enable intelligent result ranking |
+| `ranking_weights` | `dict` | `None` | Custom ranking weights |
+| `cache_ttl_seconds` | `int` | `None` | Result cache TTL in seconds |
+
+```python
+# Switch to Serper provider
+browser.configure_search(
+    provider="serper",
+    api_key="your-api-key"
+)
+
+# Prioritize fresh results
+browser.configure_search(
+    ranking_weights={
+        "bm25": 0.25,
+        "freshness": 0.45,
+        "domain_authority": 0.15,
+        "position": 0.15,
+    }
 )
 ```
 

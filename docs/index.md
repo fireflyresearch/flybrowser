@@ -96,6 +96,9 @@ Vision-capable models enable FlyBrowser to analyze screenshots for better unders
 - [Screenshots and Recording](features/screenshots-recording.md) - Capturing browser sessions
 - [Live Streaming](features/live-streaming.md) - HLS, DASH, and RTMP streaming
 - [PII Protection](features/pii-protection.md) - Secure credential handling
+- [Search](features/search.md) - Multi-provider web search with intelligent ranking
+- [Stealth Mode](features/stealth.md) - Fingerprint generation, CAPTCHA solving, and proxy network
+- [Observability](features/observability.md) - Command logging, source capture, live view, and interactive completion page with robust data handling
 
 ### Architecture
 

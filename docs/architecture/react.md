@@ -323,6 +323,9 @@ async def _generate_with_optional_vision(self, prompts: Dict) -> LLMResponse:
     use_vision = self._should_use_vision()
     
     if use_vision:
+        # Handle dynamic obstacles before capturing screenshot
+        await self._check_and_handle_dynamic_obstacles()
+        
         # Capture screenshot
         screenshot = await self.page.screenshot()
         
@@ -338,6 +341,83 @@ async def _generate_with_optional_vision(self, prompts: Dict) -> LLMResponse:
             prompts["system"],
             prompts["user"],
         )
+```
+
+### Vision Optimization
+
+Vision is skipped for blank pages to save resources:
+
+```python
+def _should_use_vision(self, iteration: int) -> bool:
+    # Skip vision for blank pages - no useful content to capture
+    # PageController wraps Playwright page - access underlying page.url
+    # self.page is PageController, self.page.page is Playwright Page
+    if hasattr(self.page, 'page') and hasattr(self.page.page, 'url'):
+        current_url = self.page.page.url
+    else:
+        current_url = None
+    
+    if current_url and current_url in ('about:blank', 'about:blank#', ''):
+        logger.debug(f"[VISION] Skipped: page is blank ({current_url})")
+        return False
+    
+    # Continue with mode-specific logic...
+```
+
+**Key Architecture Notes:**
+- `self.page` is the `PageController` wrapper class
+- `self.page.page` is the underlying Playwright `Page` object
+- `PageController` has async `get_url()` method (not sync `.url` property)
+- Playwright `Page` has sync `.url` property for immediate access
+
+## Dynamic Obstacle Detection
+
+FlyBrowser implements state-of-the-art two-phase obstacle detection for handling modals, popups, and overlays that appear dynamically via JavaScript:
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 1: Quick DOM Analysis (~10ms, no LLM)                    │
+│  - Multi-point sampling (5 viewport positions)                  │
+│  - ARIA role detection (dialog, alertdialog)                    │
+│  - Framework modal detection (Bootstrap, MUI, etc.)             │
+│  - Newsletter tool detection (MailPoet, Mailchimp, HubSpot)     │
+│  - Consent tool detection (OneTrust, CookieBot, Quantcast)      │
+│  - Confidence scoring with configurable threshold               │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼ (only if confidence > 0.3)
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 2: Full VLM Analysis + Dismissal (~2-5s)                 │
+│  - Screenshot capture and analysis                              │
+│  - AI-driven strategy selection                                 │
+│  - Multi-strategy dismissal with verification                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Integration Points
+
+1. **Before Screenshot Capture**: Dynamic obstacles are detected and dismissed before every screenshot to ensure clean page state
+2. **After Click Failures**: Auto-recovery when clicks are intercepted by modals
+3. **Cooldown System**: 3-second cooldown after handling to prevent re-detection loops
+
+```python
+async def _check_and_handle_dynamic_obstacles(self) -> bool:
+    # Skip for blank/empty pages
+    if hasattr(self.page, 'page') and hasattr(self.page.page, 'url'):
+        current_url = self.page.page.url
+    else:
+        current_url = None
+    if not current_url or current_url in ('about:blank', 'about:blank#', ''):
+        return False
+    
+    # Two-phase detection with intelligent throttling
+    result = await detector.detect_and_handle_if_needed(
+        cooldown_seconds=3.0,  # Prevent re-detection loop
+        min_confidence=0.3,    # Tuned for low false-positive rate
+    )
+    return result is not None and result.obstacles_dismissed > 0
 ```
 
 ## Error Handling
@@ -384,6 +464,56 @@ if tool.metadata.is_terminal:
 if iteration >= self.config.max_iterations:
     return AgentResult.failure_result("Max iterations reached")
 ```
+
+## Completion Page Data Flow
+
+When running in non-headless mode, the SDK displays an interactive completion page after task execution. The data flows through multiple layers with robust validation:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. AgentResult                                                  │
+│     - ReActStep objects with thought, action, observation        │
+│     - LLM usage statistics from provider                         │
+│     - Execution metadata (iterations, duration, success)         │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  2. SDK._extract_completion_data()                               │
+│     - Converts ReActStep objects to dicts                        │
+│     - Handles both object and dict representations               │
+│     - Extracts tools_used with name, duration, success           │
+│     - Extracts reasoning_steps with thought, action              │
+│     - Normalizes llm_usage with defaults for missing fields      │
+│     - Builds metadata with session_id, strategy, stop_reason     │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  3. TemplateRenderer.render_completion()                         │
+│     - Validates lists are never None (empty list fallback)       │
+│     - Ensures llm_usage has all required fields                  │
+│     - Ensures metadata has all required fields                   │
+│     - Formats duration (ms, seconds, or minutes)                 │
+│     - Serializes result_data as JSON for tree view               │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  4. completion.html (Jinja2 Template)                            │
+│     - Defensive conditionals: {% if x and x | length > 0 %}      │
+│     - Safe dict access: {{ tool.get('name', 'unknown') }}        │
+│     - Default filters: {{ value | default(0) }}                  │
+│     - Type checks: {% if step is mapping %}                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Design Principles
+
+1. **Multiple Validation Layers**: Each layer validates and transforms data
+2. **Defensive Defaults**: Every field has a sensible default value
+3. **Never Fail**: Template always renders, even with malformed data
+4. **Type Handling**: Supports both ReActStep objects and dict serializations
 
 ## Configuration
 

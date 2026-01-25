@@ -156,6 +156,17 @@ Nested variables use double underscore (`__`) as separator.
 |----------|---------|-------------|
 | `FLYBROWSER_PII_MASKING_ENABLED` | `true` | Enable PII masking |
 
+### Search Configuration
+
+Search providers require API keys set via environment variables.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERPER_API_KEY` | | Serper.dev API key (recommended) |
+| `GOOGLE_CUSTOM_SEARCH_API_KEY` | | Google Custom Search API key |
+| `GOOGLE_CUSTOM_SEARCH_CX` | | Google Custom Search engine ID |
+| `BING_SEARCH_API_KEY` | | Bing Web Search API key |
+
 ## SDK Configuration Options
 
 ### FlyBrowser Constructor
@@ -191,6 +202,10 @@ FlyBrowser(
     # Agent Configuration
     agent_config: Optional[AgentConfig] = None,  # Custom agent config
     config_file: Optional[str] = None,           # Path to config file
+    
+    # Search Configuration
+    search_provider: Optional[str] = None,       # serper, google, bing, auto
+    search_api_key: Optional[str] = None,        # API key for search provider
 )
 ```
 
@@ -249,6 +264,19 @@ config = AgentConfig(
     memory=MemoryConfig(
         max_entries=100,
         relevance_threshold=0.6,
+    ),
+    
+    # Search providers
+    search_providers=SearchProviderConfig(
+        default_provider="auto",       # auto, serper, google, bing
+        enable_ranking=True,
+        ranking_weights={
+            "bm25": 0.35,              # Keyword relevance
+            "freshness": 0.20,         # Recency
+            "domain_authority": 0.15,  # Source quality
+            "position": 0.30,          # Original ranking
+        },
+        cache_ttl_seconds=300,
     ),
 )
 
@@ -364,7 +392,167 @@ export FLYBROWSER_CLUSTER__PEERS="node1:4321:8000,node2:4321:8000,node3:4321:800
 export FLYBROWSER_CLUSTER__LOAD_BALANCING_STRATEGY=least_load
 ```
 
+## Stealth Configuration
+
+### StealthConfig
+
+Configure fingerprint generation, CAPTCHA solving, and proxy network:
+
+```python
+from flybrowser.stealth import StealthConfig
+
+config = StealthConfig(
+    # Fingerprint
+    fingerprint_enabled=True,
+    os="windows",                    # windows, macos, linux
+    browser="chrome",                # chrome, firefox, safari, edge
+    geolocation="us-west",           # us-west, uk, germany, japan, etc.
+    
+    # CAPTCHA
+    captcha_enabled=True,
+    captcha_provider="2captcha",     # 2captcha, anticaptcha, capsolver
+    captcha_api_key="your-key",
+    captcha_auto_solve=True,
+    
+    # Proxy
+    proxy_enabled=True,
+    
+    # Human behavior
+    simulate_human=True,
+    typing_delay_min=50,
+    typing_delay_max=150,
+    simulate_mouse_movement=True,
+    action_delay_min=100,
+    action_delay_max=500,
+)
+```
+
+#### StealthConfig Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `fingerprint_enabled` | `bool` | `False` | Enable fingerprint generation |
+| `fingerprint` | `str` | `"auto"` | Fingerprint profile: auto, macos_chrome, etc. |
+| `os` | `str` | `None` | OS override: windows, macos, linux |
+| `browser` | `str` | `None` | Browser override: chrome, firefox, safari |
+| `geolocation` | `str` | `"us-west"` | Geolocation for consistency |
+| `captcha_enabled` | `bool` | `False` | Enable CAPTCHA solving |
+| `captcha_provider` | `str` | `None` | Provider: 2captcha, anticaptcha, capsolver |
+| `captcha_api_key` | `str` | `None` | CAPTCHA provider API key |
+| `captcha_auto_solve` | `bool` | `True` | Auto-solve during agent execution |
+| `proxy_enabled` | `bool` | `False` | Enable proxy network |
+| `stealth_mode` | `bool` | `True` | Enable anti-detection scripts |
+| `simulate_human` | `bool` | `True` | Human-like behavior simulation |
+| `typing_delay_min` | `int` | `50` | Min typing delay (ms) |
+| `typing_delay_max` | `int` | `150` | Max typing delay (ms) |
+| `simulate_mouse_movement` | `bool` | `True` | Mouse movement simulation |
+| `action_delay_min` | `int` | `100` | Min delay between actions (ms) |
+| `action_delay_max` | `int` | `500` | Max delay between actions (ms) |
+
+### Stealth Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FLYBROWSER_CAPTCHA_PROVIDER` | | CAPTCHA provider |
+| `FLYBROWSER_CAPTCHA_API_KEY` | | CAPTCHA API key |
+| `FLYBROWSER_CAPTCHA_AUTO_SOLVE` | `true` | Auto-solve CAPTCHAs |
+| `BRIGHT_DATA_USERNAME` | | Bright Data proxy username |
+| `BRIGHT_DATA_PASSWORD` | | Bright Data proxy password |
+| `OXYLABS_USERNAME` | | Oxylabs proxy username |
+| `OXYLABS_PASSWORD` | | Oxylabs proxy password |
+
+## Observability Configuration
+
+### ObservabilityConfig
+
+Configure command logging, source capture, and live view:
+
+```python
+from flybrowser.observability import ObservabilityConfig, StreamQuality, ControlMode
+
+config = ObservabilityConfig(
+    # Command logging
+    enable_command_logging=True,
+    log_llm_prompts=True,
+    log_llm_responses=True,
+    max_log_entries=10000,
+    auto_export_logs=False,
+    log_export_path="./logs/",
+    
+    # Source capture
+    enable_source_capture=True,
+    capture_resources=True,
+    max_resource_size_bytes=5*1024*1024,
+    max_snapshots=100,
+    auto_capture_on_navigation=False,
+    capture_har=True,
+    
+    # Live view
+    enable_live_view=True,
+    live_view_host="0.0.0.0",
+    live_view_port=8765,
+    live_view_quality=StreamQuality.HIGH,
+    live_view_control_mode=ControlMode.VIEW_ONLY,
+    live_view_require_auth=True,
+    live_view_auth_token="secret-token",
+    live_view_max_viewers=10,
+)
+```
+
+#### ObservabilityConfig Options
+
+**Command Logging:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable_command_logging` | `bool` | `True` | Enable command logging |
+| `log_llm_prompts` | `bool` | `False` | Log LLM prompts |
+| `log_llm_responses` | `bool` | `False` | Log LLM responses |
+| `max_log_entries` | `int` | `10000` | Max log entries to keep |
+| `auto_export_logs` | `bool` | `False` | Auto-export on session end |
+| `log_export_path` | `str` | `None` | Export path for logs |
+
+**Source Capture:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable_source_capture` | `bool` | `False` | Enable source capture |
+| `capture_resources` | `bool` | `False` | Capture page resources |
+| `max_resource_size_bytes` | `int` | `5MB` | Max resource size |
+| `max_snapshots` | `int` | `100` | Max snapshots to keep |
+| `auto_capture_on_navigation` | `bool` | `False` | Auto-capture on page load |
+| `capture_har` | `bool` | `False` | Enable HAR logging |
+
+**Live View:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable_live_view` | `bool` | `False` | Enable live view |
+| `live_view_host` | `str` | `"0.0.0.0"` | Server host |
+| `live_view_port` | `int` | `8765` | Server port |
+| `live_view_quality` | `StreamQuality` | `MEDIUM` | Stream quality |
+| `live_view_control_mode` | `ControlMode` | `VIEW_ONLY` | Viewer control mode |
+| `live_view_require_auth` | `bool` | `False` | Require authentication |
+| `live_view_auth_token` | `str` | `None` | Auth token |
+| `live_view_max_viewers` | `int` | `10` | Max concurrent viewers |
+
+### Observability Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FLYBROWSER_OBSERVABILITY_LOGGING` | `true` | Enable command logging |
+| `FLYBROWSER_OBSERVABILITY_LOG_LLM` | `false` | Log LLM prompts/responses |
+| `FLYBROWSER_OBSERVABILITY_MAX_ENTRIES` | `10000` | Max log entries |
+| `FLYBROWSER_OBSERVABILITY_CAPTURE` | `false` | Enable source capture |
+| `FLYBROWSER_OBSERVABILITY_CAPTURE_HAR` | `false` | Enable HAR logging |
+| `FLYBROWSER_LIVE_VIEW_ENABLED` | `false` | Enable live view |
+| `FLYBROWSER_LIVE_VIEW_PORT` | `8765` | Live view port |
+| `FLYBROWSER_LIVE_VIEW_AUTH` | `false` | Require authentication |
+| `FLYBROWSER_LIVE_VIEW_TOKEN` | | Auth token |
+
 ## See Also
 
 - [CLI Reference](cli.md) - Command-line configuration
 - [Deployment Guide](../deployment/standalone.md) - Deployment options
+- [Stealth Mode](../features/stealth.md) - Stealth feature guide
+- [Observability](../features/observability.md) - Observability feature guide
