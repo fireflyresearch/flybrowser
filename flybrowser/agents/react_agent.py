@@ -59,6 +59,8 @@ from .sitemap_graph import (
 from .parallel_explorer import ParallelPageExplorer, ParallelExplorationStats
 from flybrowser.prompts import PromptManager
 from flybrowser.llm.base import ModelCapability
+from flybrowser.llm.conversation import ConversationManager
+from flybrowser.llm.token_budget import TokenEstimator
 
 if TYPE_CHECKING:
     from flybrowser.core.page import PageController
@@ -199,6 +201,13 @@ class ReActAgent:
         
         # Initialize goal interpreter for fast-path execution
         self.goal_interpreter = GoalInterpreter()
+        
+        # Initialize conversation manager for multi-turn context handling
+        # This handles large content splitting and token budget management
+        self.conversation = ConversationManager(
+            llm_provider=llm_provider,
+            model_info=self.model_info,
+        )
         
         # Initialize page exploration components (optional)
         self._page_explorer = None
@@ -743,6 +752,9 @@ class ReActAgent:
         
         # Parallel exploration tracking
         self._parallel_exploration_done = False
+        
+        # Reset conversation manager for new task
+        self.conversation.reset()
     
     async def _preliminary_sitemap_check_async(self, task: str) -> None:
         """
@@ -1103,6 +1115,98 @@ class ReActAgent:
         if len(self._action_history) > max_size:
             self._action_history = self._action_history[-max_size:]
 
+    def _check_and_handle_large_context(self, memory_context: str) -> str:
+        """
+        Check if memory context is too large and handle it via ConversationManager.
+        
+        If the context would exceed token limits, this method:
+        1. Identifies large extraction data
+        2. Uses ConversationManager to process it in chunks
+        3. Returns a condensed summary suitable for the prompt
+        
+        Args:
+            memory_context: Raw memory context from format_for_prompt()
+            
+        Returns:
+            Processed context string that fits within limits
+        """
+        # Estimate tokens in context
+        context_tokens = TokenEstimator.estimate(memory_context).tokens
+        
+        # Check against conversation manager's available budget
+        # Reserve 50% of available for system prompt, tools, and task
+        max_context_tokens = self.conversation.get_available_tokens() // 2
+        
+        if context_tokens <= max_context_tokens:
+            # Context fits, return as-is
+            return memory_context
+        
+        logger.warning(
+            f"Memory context too large ({context_tokens} tokens > {max_context_tokens} max). "
+            f"Truncating to fit context window."
+        )
+        
+        # Truncate context intelligently
+        # Keep the most important sections:
+        # 1. Current goal (always keep)
+        # 2. Current page info (always keep)
+        # 3. Recent actions (keep last 3)
+        # 4. Truncate extraction data
+        
+        lines = memory_context.split('\n')
+        essential_lines = []
+        extraction_lines = []
+        other_lines = []
+        
+        in_extraction = False
+        for line in lines:
+            if '## Current Goal' in line or '## Current Page' in line:
+                essential_lines.append(line)
+                in_extraction = False
+            elif '## Extracted Data' in line or '### extracted_' in line:
+                in_extraction = True
+                extraction_lines.append(line)
+            elif in_extraction:
+                extraction_lines.append(line)
+            elif '## Recent Actions' in line:
+                essential_lines.append(line)
+                in_extraction = False
+            else:
+                other_lines.append(line)
+        
+        # Build truncated context
+        truncated_parts = []
+        
+        # Always include essential lines
+        truncated_parts.extend(essential_lines)
+        
+        # Truncate extraction data significantly
+        if extraction_lines:
+            extraction_text = '\n'.join(extraction_lines)
+            max_extraction_chars = min(8000, max_context_tokens * 2)  # ~2K tokens max for extractions
+            if len(extraction_text) > max_extraction_chars:
+                truncated_extraction = (
+                    extraction_text[:max_extraction_chars // 2] +
+                    "\n\n... [LARGE EXTRACTION TRUNCATED - use extract_text with specific selector for details] ...\n\n" +
+                    extraction_text[-1000:]
+                )
+                truncated_parts.append(truncated_extraction)
+            else:
+                truncated_parts.append(extraction_text)
+        
+        # Add other lines if space permits
+        remaining_chars = (max_context_tokens * 4) - sum(len(p) for p in truncated_parts)
+        if remaining_chars > 1000:
+            other_text = '\n'.join(other_lines)
+            if len(other_text) <= remaining_chars:
+                truncated_parts.append(other_text)
+            else:
+                truncated_parts.append(other_text[:remaining_chars - 50] + "\n... [truncated]")
+        
+        result = '\n'.join(truncated_parts)
+        logger.info(f"Truncated context from {context_tokens} to ~{TokenEstimator.estimate(result).tokens} tokens")
+        return result
+
     def _build_prompt(self, task: str) -> Dict[str, str]:
         """
         Build the prompts for LLM with task and context using PromptManager.
@@ -1119,6 +1223,9 @@ class ReActAgent:
         """
         # Get memory context
         memory_context = self.memory.format_for_prompt()
+        
+        # Check and handle large context using ConversationManager
+        memory_context = self._check_and_handle_large_context(memory_context)
 
         # Get available tools description
         tools_prompt = self.tool_registry.generate_tools_prompt()

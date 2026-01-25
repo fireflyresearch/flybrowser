@@ -25,6 +25,26 @@ from flybrowser.llm.base import (
 )
 from flybrowser.llm.factory import LLMProviderFactory
 from flybrowser.llm.qwen_provider import QwenProvider
+from flybrowser.llm.conversation import (
+    ConversationManager,
+    ConversationMessage,
+    ConversationHistory,
+    MessageRole,
+)
+from flybrowser.llm.token_budget import (
+    TokenEstimator,
+    TokenBudgetManager,
+    ContentType,
+)
+from flybrowser.llm.chunking import (
+    Chunk,
+    ChunkingStrategy,
+    SmartChunker,
+    TextChunker,
+    HTMLChunker,
+    JSONChunker,
+    get_chunker,
+)
 
 __all__ = [
     # Base classes
@@ -37,5 +57,22 @@ __all__ = [
     "QwenProvider",
     "ToolCall",
     "ToolDefinition",
+    # Conversation management
+    "ConversationManager",
+    "ConversationMessage",
+    "ConversationHistory",
+    "MessageRole",
+    # Token budget
+    "TokenEstimator",
+    "TokenBudgetManager",
+    "ContentType",
+    # Chunking
+    "Chunk",
+    "ChunkingStrategy",
+    "SmartChunker",
+    "TextChunker",
+    "HTMLChunker",
+    "JSONChunker",
+    "get_chunker",
 ]
 
