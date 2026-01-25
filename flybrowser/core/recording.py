@@ -68,8 +68,8 @@ class RecordingConfig:
     screenshot_quality: int = 80  # For JPEG/WebP
     screenshot_full_page: bool = False
     video_enabled: bool = True
-    video_size: Dict[str, int] = field(default_factory=lambda: {"width": 1280, "height": 720})
-    video_frame_rate: int = 25
+    video_size: Dict[str, int] = field(default_factory=lambda: {"width": 1920, "height": 1080})
+    video_frame_rate: int = 30
     max_screenshots: int = 1000
     auto_screenshot_on_navigation: bool = True
     auto_screenshot_on_action: bool = False
@@ -112,9 +112,9 @@ class VideoRecording:
     file_path: Optional[str] = None
     size_bytes: int = 0
     duration_seconds: float = 0.0
-    width: int = 1280
-    height: int = 720
-    frame_rate: int = 25
+    width: int = 1920
+    height: int = 1080
+    frame_rate: int = 30
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -297,8 +297,8 @@ class VideoRecorder:
             return await browser.new_context()
 
         self._current_recording = VideoRecording(
-            width=self.config.video_size.get("width", 1280),
-            height=self.config.video_size.get("height", 720),
+            width=self.config.video_size.get("width", 1920),
+            height=self.config.video_size.get("height", 1080),
             frame_rate=self.config.video_frame_rate,
         )
 

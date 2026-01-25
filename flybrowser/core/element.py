@@ -30,17 +30,202 @@ This enables natural language element interaction like:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
+import time
 from typing import Any, Dict, Optional
 
 from playwright.async_api import Page
 
-from flybrowser.agents.validation_agent import ResponseValidator
 from flybrowser.exceptions import ElementNotFoundError
 from flybrowser.llm.base import BaseLLMProvider
-from flybrowser.llm.prompts import ELEMENT_DETECTION_PROMPT, ELEMENT_DETECTION_SYSTEM
+from flybrowser.prompts import PromptManager
 from flybrowser.utils.logger import logger
 from flybrowser.utils.timing import StepTimer
+from flybrowser.agents.structured_llm import StructuredLLMWrapper
+from flybrowser.agents.schemas import ELEMENT_DETECTION_SCHEMA
+
+
+# =============================================================================
+# Browser Action Logger - Colored logging for Playwright browser actions
+# =============================================================================
+
+class BrowserActionLogger:
+    """
+    Provides consistent colored logging for browser actions.
+    
+    This makes it easy to see when the browser is actually performing actions
+    like clicking, typing, navigating, etc.
+    """
+    
+    # ANSI color codes for browser actions
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    
+    # Browser action specific colors
+    BROWSER = "\033[38;5;75m"     # Light blue for browser actions
+    SUCCESS = "\033[38;5;82m"     # Bright green
+    ERROR = "\033[38;5;196m"      # Bright red
+    WARNING = "\033[38;5;220m"    # Yellow
+    
+    def __init__(self):
+        self._action_start_time: Optional[float] = None
+        self._current_action: Optional[str] = None
+    
+    def start_action(self, action_type: str, description: str) -> float:
+        """
+        Log the start of a browser action.
+        
+        Args:
+            action_type: Type of action (CLICK, TYPE, NAVIGATE, etc.)
+            description: What is being acted on
+            
+        Returns:
+            Start time for calculating duration
+        """
+        self._action_start_time = time.time()
+        self._current_action = action_type
+        logger.info(
+            f"{self.BROWSER}{self.BOLD}> [BROWSER {action_type}]{self.RESET} "
+            f"{self.BROWSER}{description}{self.RESET}"
+        )
+        return self._action_start_time
+    
+    def end_action(self, success: bool, details: Optional[str] = None) -> None:
+        """
+        Log the end of a browser action.
+        
+        Args:
+            success: Whether the action succeeded
+            details: Optional additional details
+        """
+        duration_ms = 0.0
+        if self._action_start_time:
+            duration_ms = (time.time() - self._action_start_time) * 1000
+        
+        status_icon = "[OK]" if success else "[FAIL]"
+        status_color = self.SUCCESS if success else self.ERROR
+        details_str = f" -> {details}" if details else ""
+        
+        logger.info(
+            f"{status_color}{status_icon}{self.RESET} {self.BROWSER}[BROWSER]{self.RESET} "
+            f"{self.DIM}{duration_ms:.0f}ms{self.RESET}{details_str}"
+        )
+        
+        self._action_start_time = None
+        self._current_action = None
+    
+    def log_step(self, message: str) -> None:
+        """Log an intermediate step within an action."""
+        logger.info(f"  {self.BROWSER}|-{self.RESET} {message}")
+    
+    def log_warning(self, message: str) -> None:
+        """Log a warning during an action."""
+        logger.warning(f"  {self.WARNING}[WARN]{self.RESET} {message}")
+    
+    def log_retry(self, attempt: int, reason: str) -> None:
+        """Log a retry attempt."""
+        logger.info(f"  {self.WARNING}[RETRY {attempt}]{self.RESET} {reason}")
+
+
+# Global browser action logger instance
+_browser_logger = BrowserActionLogger()
+
+
+# Common element patterns for well-known sites and element types
+COMMON_ELEMENT_PATTERNS = {
+    # Search boxes across various sites
+    "search": {
+        "description_keywords": ["search", "buscar", "rechercher", "suchen"],
+        "selectors": [
+            # Google
+            "textarea[name='q']",
+            "input[name='q']",
+            "input[title='Search']",
+            "input[aria-label='Search']",
+            # Generic patterns
+            "input[type='search']",
+            "input[placeholder*='search' i]",
+            "input[placeholder*='buscar' i]",
+            "input[name='search']",
+            "input[name='query']",
+            "input[id*='search' i]",
+            "input[class*='search' i]",
+            "[role='searchbox']",
+            "[aria-label*='search' i]",
+        ],
+    },
+    # Submit/Search buttons
+    "submit_search": {
+        "description_keywords": ["search button", "submit", "go", "find"],
+        "selectors": [
+            "button[type='submit']",
+            "input[type='submit']",
+            "button[aria-label*='search' i]",
+            "button:has-text('Search')",
+            "button:has-text('Go')",
+            "[role='button'][aria-label*='search' i]",
+        ],
+    },
+    # Login buttons
+    "login": {
+        "description_keywords": ["login", "log in", "sign in", "signin"],
+        "selectors": [
+            "button:has-text('Log in')",
+            "button:has-text('Login')",
+            "button:has-text('Sign in')",
+            "a:has-text('Log in')",
+            "a:has-text('Sign in')",
+            "[data-testid*='login' i]",
+            "#login-button",
+            ".login-btn",
+        ],
+    },
+    # Email/Username inputs
+    "email_input": {
+        "description_keywords": ["email", "username", "user"],
+        "selectors": [
+            "input[type='email']",
+            "input[name='email']",
+            "input[name='username']",
+            "input[id*='email' i]",
+            "input[placeholder*='email' i]",
+            "input[autocomplete='email']",
+            "input[autocomplete='username']",
+        ],
+    },
+    # Password inputs
+    "password_input": {
+        "description_keywords": ["password", "contraseña"],
+        "selectors": [
+            "input[type='password']",
+            "input[name='password']",
+            "input[id*='password' i]",
+            "input[autocomplete='current-password']",
+        ],
+    },
+    # Search result links (Google, Bing, etc.)
+    "search_result_link": {
+        "description_keywords": ["search result", "first result", "result link"],
+        "selectors": [
+            # Google search results
+            "#search a[href]:not([href*='google.com'])",
+            "#rso a[href]:not([href*='google.com'])",
+            "div.g a[href]:not([href*='google.com'])",
+            "div[data-hveid] a[href]:not([href*='google.com'])",
+            # Bing search results
+            "#b_results a[href]:not([href*='bing.com'])",
+            "li.b_algo a[href]",
+            # DuckDuckGo
+            ".result__a[href]",
+            # Generic result containers
+            "[data-testid*='result'] a[href]",
+            "article a[href]",
+        ],
+    },
+}
 
 
 class ElementDetector:
@@ -61,6 +246,12 @@ class ElementDetector:
         >>> await detector.click(element_info["selector"])
     """
 
+    # Human-like delay ranges (milliseconds)
+    MIN_ACTION_DELAY = 100
+    MAX_ACTION_DELAY = 300
+    MIN_TYPING_DELAY = 50
+    MAX_TYPING_DELAY = 150
+
     def __init__(self, page: Page, llm_provider: BaseLLMProvider) -> None:
         """
         Initialize the element detector.
@@ -77,7 +268,22 @@ class ElementDetector:
         """
         self.page = page
         self.llm = llm_provider
-        self.validator = ResponseValidator(llm_provider)
+        self.prompt_manager = PromptManager()
+    
+    async def _human_delay(self, min_ms: int = None, max_ms: int = None) -> None:
+        """
+        Add a random delay to simulate human-like behavior.
+        
+        This helps avoid bot detection by making actions appear more natural.
+        
+        Args:
+            min_ms: Minimum delay in milliseconds (default: MIN_ACTION_DELAY)
+            max_ms: Maximum delay in milliseconds (default: MAX_ACTION_DELAY)
+        """
+        min_delay = min_ms or self.MIN_ACTION_DELAY
+        max_delay = max_ms or self.MAX_ACTION_DELAY
+        delay = random.randint(min_delay, max_delay) / 1000.0
+        await asyncio.sleep(delay)
 
     async def find_element(
         self, description: str, use_vision: bool = True
@@ -130,6 +336,15 @@ class ElementDetector:
         try:
             logger.info(f"Finding element: {description}")
 
+            # First, try common patterns for well-known element types
+            timer.start_step("common_patterns")
+            common_result = await self._try_common_patterns(description)
+            timer.end_step("common_patterns")
+            
+            if common_result:
+                common_result["timing"] = timer.get_timings().to_dict()
+                return common_result
+
             # Get page information for context
             timer.start_step("get_page_context")
             url = self.page.url
@@ -137,56 +352,75 @@ class ElementDetector:
             html = await self.page.content()
             timer.end_step("get_page_context")
 
-            # Truncate HTML for prompt to avoid token limits
-            # Keep first 5000 characters which usually includes key page structure
-            html_snippet = html[:5000] + "..." if len(html) > 5000 else html
+            # Extract relevant HTML for the LLM - focus on interactive elements
+            html_snippet = await self._extract_relevant_html(html, description)
 
-            # Build prompt with page context
-            prompt = ELEMENT_DETECTION_PROMPT.format(
+            # Use vision-based detection if enabled AND model supports it
+            timer.start_step("llm_generate")
+            llm_has_vision = getattr(self.llm, 'vision_enabled', False) or self.llm.supports_vision()
+            use_vision_actual = use_vision and llm_has_vision
+            if use_vision and not llm_has_vision:
+                logger.debug(f"Vision requested but model {self.llm.model} doesn't support it, using text-only")
+            
+            # Get prompts from template manager
+            prompts = self.prompt_manager.get_prompt(
+                "element_detection",
                 description=description,
                 url=url,
                 title=title,
                 html_snippet=html_snippet,
+                screenshot_available=use_vision_actual,
             )
-
-            # Define expected response schema
-            schema = {
-                "type": "object",
-                "properties": {
-                    "selector": {"type": "string"},
-                    "selector_type": {"type": "string"},
-                    "confidence": {"type": "number"},
-                    "reasoning": {"type": "string"},
-                },
-                "required": ["selector"],
-            }
-
-            # Use vision-based detection if enabled
-            timer.start_step("llm_generate")
-            if use_vision:
-                screenshot = await self.page.screenshot(type="png")
-                response = await self.llm.generate_with_vision(
-                    prompt=prompt,
-                    image_data=screenshot,
-                    system_prompt=ELEMENT_DETECTION_SYSTEM,
-                    temperature=0.3,
-                )
-            else:
-                response = await self.llm.generate(
-                    prompt=prompt,
-                    system_prompt=ELEMENT_DETECTION_SYSTEM,
-                    temperature=0.3,
-                )
+            
+            # Use StructuredLLMWrapper for reliable JSON output with repair
+            wrapper = StructuredLLMWrapper(
+                llm_provider=self.llm,
+                max_repair_attempts=2,
+                repair_temperature=0.1,
+            )
+            
+            try:
+                if use_vision_actual:
+                    screenshot = await self.page.screenshot(type="png")
+                    result = await wrapper.generate_structured_with_vision(
+                        prompt=prompts["user"],
+                        image_data=screenshot,
+                        schema=ELEMENT_DETECTION_SCHEMA,
+                        system_prompt=prompts["system"],
+                        temperature=0.3,
+                    )
+                else:
+                    result = await wrapper.generate_structured(
+                        prompt=prompts["user"],
+                        schema=ELEMENT_DETECTION_SCHEMA,
+                        system_prompt=prompts["system"],
+                        temperature=0.3,
+                    )
+            except ValueError as e:
+                # Structured output validation failed after repair attempts
+                raise ElementNotFoundError(f"Could not parse element detection response: {e}")
             timer.end_step("llm_generate")
-
-            # Validate and fix response if needed
-            timer.start_step("validate_response")
-            result = await self.validator.validate_and_fix(
-                response.content,
-                schema,
-                context=f"Finding element matching: {description}"
-            )
-            timer.end_step("validate_response")
+            
+            # Validate that the selector actually exists on the page
+            timer.start_step("validate_selector")
+            selector = result.get("selector", "")
+            selector_type = result.get("selector_type", "css")
+            
+            validated_selector = await self._validate_selector(selector, selector_type)
+            if validated_selector:
+                result["selector"] = validated_selector["selector"]
+                result["selector_type"] = validated_selector["selector_type"]
+                result["validated"] = True
+            else:
+                # LLM selector didn't work, try fallback strategies
+                logger.warning(f"LLM selector '{selector}' not found, trying fallbacks")
+                fallback = await self._try_fallback_selectors(description)
+                if fallback:
+                    result = fallback
+                else:
+                    result["validated"] = False
+                    result["warning"] = "Selector not validated - may not exist on page"
+            timer.end_step("validate_selector")
             
             logger.info(f"Found element with selector: {result.get('selector')}")
             
@@ -197,46 +431,419 @@ class ElementDetector:
         except Exception as e:
             logger.error(f"Element detection failed: {e}")
             raise ElementNotFoundError(f"Failed to find element '{description}': {e}") from e
-
-    async def click(self, selector: str, selector_type: str = "css") -> None:
+    
+    async def _try_common_patterns(self, description: str) -> Optional[Dict[str, Any]]:
         """
-        Click an element.
+        Try common element patterns before falling back to LLM.
+        
+        This provides fast, reliable detection for well-known element types.
+        Uses conservative matching to avoid false positives.
+        """
+        description_lower = description.lower()
+        
+        for pattern_type, pattern_info in COMMON_ELEMENT_PATTERNS.items():
+            # Skip the search input pattern if looking for search results
+            # "search result" should NOT match the search input box
+            search_result_keywords = ["search result", "result link", "first result", "click result"]
+            if pattern_type == "search" and any(kw in description_lower for kw in search_result_keywords):
+                logger.debug(f"Skipping 'search' pattern for result-related query: {description}")
+                continue
+            # Check if description matches any keywords for this pattern
+            if any(keyword in description_lower for keyword in pattern_info["description_keywords"]):
+                # Try each selector for this pattern
+                for selector in pattern_info["selectors"]:
+                    try:
+                        elem = await self.page.query_selector(selector)
+                        if elem:
+                            is_visible = await elem.is_visible()
+                            if is_visible:
+                                # Check if multiple elements match - if so, mark it
+                                # The _get_locator method will use .first to handle this
+                                all_elements = await self.page.query_selector_all(selector)
+                                element_count = len(all_elements)
+                                if element_count > 1:
+                                    logger.info(f"Found element via common pattern: {selector} (will use .first of {element_count})")
+                                    return {
+                                        "selector": selector,
+                                        "selector_type": "css",
+                                        "confidence": 0.95,
+                                        "reasoning": f"Matched common {pattern_type} pattern (first of {element_count} matches)",
+                                        "validated": True,
+                                        "use_first": True,  # Signal to use .first locator
+                                        "element_count": element_count,
+                                    }
+                                else:
+                                    logger.info(f"Found element via common pattern: {selector}")
+                                    return {
+                                        "selector": selector,
+                                        "selector_type": "css",
+                                        "confidence": 0.95,
+                                        "reasoning": f"Matched common {pattern_type} pattern",
+                                        "validated": True,
+                                    }
+                    except Exception:
+                        continue
+        
+        return None
+    
+    async def _validate_selector(self, selector: str, selector_type: str) -> Optional[Dict[str, Any]]:
+        """
+        Validate that a selector exists and is visible on the page.
+        """
+        try:
+            if selector_type == "xpath":
+                elem = await self.page.query_selector(f"xpath={selector}")
+            else:
+                elem = await self.page.query_selector(selector)
+            
+            if elem:
+                is_visible = await elem.is_visible()
+                if is_visible:
+                    return {"selector": selector, "selector_type": selector_type}
+        except Exception as e:
+            logger.debug(f"Selector validation failed for '{selector}': {e}")
+        
+        return None
+    
+    async def _extract_relevant_html(self, full_html: str, description: str) -> str:
+        """
+        Extract relevant HTML sections for element detection.
+        
+        Instead of just truncating, we extract the most relevant parts:
+        - All <input>, <textarea>, <select> elements
+        - All <button> elements
+        - All <a> elements (limited)
+        - Elements with role attributes
+        - Forms and their contents
+        """
+        import re
+        
+        description_lower = description.lower()
+        relevant_parts = []
+        
+        # Extract <head> section for meta info (truncated)
+        head_match = re.search(r'<head[^>]*>.*?</head>', full_html, re.DOTALL | re.IGNORECASE)
+        if head_match:
+            head_content = head_match.group(0)
+            # Only keep title and relevant meta tags
+            title_match = re.search(r'<title[^>]*>.*?</title>', head_content, re.DOTALL | re.IGNORECASE)
+            if title_match:
+                relevant_parts.append(title_match.group(0))
+        
+        # Extract all form elements
+        forms = re.findall(r'<form[^>]*>.*?</form>', full_html, re.DOTALL | re.IGNORECASE)
+        for form in forms[:3]:  # Limit to 3 forms
+            relevant_parts.append(form[:2000])  # Limit form size
+        
+        # Extract all input elements with context
+        inputs = re.findall(r'<input[^>]*/?>', full_html, re.IGNORECASE)
+        relevant_parts.extend(inputs[:30])  # Limit to 30 inputs
+        
+        # Extract all textarea elements
+        textareas = re.findall(r'<textarea[^>]*>.*?</textarea>', full_html, re.DOTALL | re.IGNORECASE)
+        relevant_parts.extend(textareas[:10])
+        
+        # Extract all select elements
+        selects = re.findall(r'<select[^>]*>.*?</select>', full_html, re.DOTALL | re.IGNORECASE)
+        relevant_parts.extend(s[:500] for s in selects[:10])  # Truncate long selects
+        
+        # Extract all button elements
+        buttons = re.findall(r'<button[^>]*>.*?</button>', full_html, re.DOTALL | re.IGNORECASE)
+        relevant_parts.extend(buttons[:20])
+        
+        # Extract elements with role attribute
+        role_elements = re.findall(r'<[^>]+role=["\'][^"\'>]+["\'][^>]*>.*?</[^>]+>', full_html, re.DOTALL | re.IGNORECASE)
+        relevant_parts.extend(r[:300] for r in role_elements[:15])
+        
+        # If searching for search-related elements
+        if any(word in description_lower for word in ['search', 'buscar', 'find', 'query']):
+            # Look for search-specific patterns
+            search_patterns = [
+                r'<[^>]*(?:search|query|buscar)[^>]*>.*?</[^>]+>',
+                r'<[^>]*name=["\']q["\'][^>]*>',
+                r'<[^>]*aria-label=["\'][^"\'>]*search[^"\'>]*["\'][^>]*>',
+            ]
+            for pattern in search_patterns:
+                matches = re.findall(pattern, full_html, re.DOTALL | re.IGNORECASE)
+                relevant_parts.extend(matches[:5])
+        
+        # If searching for links
+        if any(word in description_lower for word in ['link', 'click', 'navigate', 'go to']):
+            links = re.findall(r'<a[^>]*>.*?</a>', full_html, re.DOTALL | re.IGNORECASE)
+            relevant_parts.extend(l[:200] for l in links[:20])
+        
+        # Combine and deduplicate
+        combined = "\n".join(dict.fromkeys(relevant_parts))  # Preserve order, remove duplicates
+        
+        # If still too long, truncate
+        if len(combined) > 8000:
+            combined = combined[:8000] + "\n... [truncated]"
+        
+        # If we didn't extract much, fall back to first part of HTML
+        if len(combined) < 500:
+            combined = full_html[:5000] + "\n... [truncated]"
+        
+        return combined
+    
+    async def _try_fallback_selectors(self, description: str) -> Optional[Dict[str, Any]]:
+        """
+        Try various fallback strategies when the primary selector fails.
+        """
+        description_lower = description.lower()
+        
+        # Generate fallback selectors based on description
+        fallback_selectors = []
+        
+        # Text-based fallbacks
+        if any(word in description_lower for word in ["button", "click", "submit"]):
+            words = description.replace("the", "").replace("a ", "").strip().split()
+            for word in words:
+                if word.lower() not in ["button", "click", "submit", "the", "a", "an"]:
+                    fallback_selectors.extend([
+                        f"button:has-text('{word}')",
+                        f"a:has-text('{word}')",
+                        f"[role='button']:has-text('{word}')",
+                    ])
+        
+        # Input field fallbacks
+        if any(word in description_lower for word in ["input", "field", "textbox", "type"]):
+            fallback_selectors.extend([
+                "input:visible",
+                "textarea:visible",
+                "[contenteditable='true']:visible",
+            ])
+        
+        # Try all common pattern selectors as last resort
+        for pattern_info in COMMON_ELEMENT_PATTERNS.values():
+            fallback_selectors.extend(pattern_info["selectors"])
+        
+        # Try each fallback
+        for selector in fallback_selectors:
+            try:
+                elem = await self.page.query_selector(selector)
+                if elem:
+                    is_visible = await elem.is_visible()
+                    if is_visible:
+                        logger.info(f"Found element via fallback: {selector}")
+                        return {
+                            "selector": selector,
+                            "selector_type": "css",
+                            "confidence": 0.7,
+                            "reasoning": "Found via fallback selector",
+                            "validated": True,
+                        }
+            except Exception:
+                continue
+        
+        return None
+
+    async def click(
+        self,
+        selector: str,
+        selector_type: str = "css",
+        timeout: int = 10000,
+        force: bool = False,
+        human_like: bool = True,
+        use_first: bool = False,
+    ) -> None:
+        """
+        Click an element with robust error handling and fallbacks.
 
         Args:
             selector: Element selector
             selector_type: Type of selector (css or xpath)
+            timeout: Maximum time to wait for element in milliseconds
+            force: Whether to force click even if element is obscured
+            human_like: Whether to add human-like delay before clicking
+            use_first: If True, use .first to avoid strict mode violations when
+                       multiple elements match the selector
         """
+        # Truncate selector for display
+        selector_display = selector[:60] + "..." if len(selector) > 60 else selector
+        _browser_logger.start_action("CLICK", selector_display)
+        
         try:
-            if selector_type == "xpath":
-                await self.page.locator(f"xpath={selector}").click()
-            else:
-                await self.page.locator(selector).click()
-            logger.info(f"Clicked element: {selector}")
+            # Add human-like delay before action
+            if human_like:
+                await self._human_delay()
+            
+            locator = self._get_locator(selector, selector_type, use_first=use_first)
+            
+            # Wait for element to be visible with custom timeout
+            await locator.wait_for(state="visible", timeout=timeout)
+            
+            # Try normal click first
+            try:
+                await locator.click(timeout=timeout, force=force)
+                _browser_logger.end_action(True, "clicked")
+                return
+            except Exception as click_error:
+                error_msg = str(click_error).lower()
+                # Detect Playwright strict mode violation and auto-retry with .first
+                if "strict mode violation" in error_msg and not use_first:
+                    _browser_logger.log_retry(1, "strict mode violation, using .first")
+                    locator = self._get_locator(selector, selector_type, use_first=True)
+                    try:
+                        await locator.click(timeout=timeout, force=force)
+                        _browser_logger.end_action(True, "clicked (first match)")
+                        return
+                    except Exception as retry_error:
+                        logger.debug(f"Click with .first also failed: {retry_error}")
+                _browser_logger.log_step(f"Normal click failed, trying alternatives")
+            
+            # Try scrolling into view and clicking
+            try:
+                _browser_logger.log_step("Scrolling into view")
+                await locator.scroll_into_view_if_needed()
+                await locator.click(timeout=5000)
+                _browser_logger.end_action(True, "clicked (after scroll)")
+                return
+            except Exception:
+                pass
+            
+            # Try force click as last resort
+            if not force:
+                try:
+                    _browser_logger.log_step("Attempting force click")
+                    await locator.click(force=True, timeout=5000)
+                    _browser_logger.end_action(True, "force clicked")
+                    return
+                except Exception:
+                    pass
+            
+            # If all else fails, try JavaScript click
+            try:
+                _browser_logger.log_step("Attempting JS click")
+                await locator.evaluate("el => el.click()")
+                _browser_logger.end_action(True, "JS clicked")
+                return
+            except Exception as e:
+                _browser_logger.end_action(False, f"all methods failed: {e}")
+                raise ElementNotFoundError(f"All click methods failed for {selector}: {e}")
+                
         except Exception as e:
-            logger.error(f"Click failed: {e}")
+            _browser_logger.end_action(False, str(e)[:50])
             raise ElementNotFoundError(f"Failed to click element {selector}: {e}") from e
 
     async def type_text(
-        self, selector: str, text: str, selector_type: str = "css", delay: int = 0
+        self,
+        selector: str,
+        text: str,
+        selector_type: str = "css",
+        delay: int = 75,  # Human-like typing delay (50-150ms is natural)
+        clear_first: bool = True,
+        timeout: int = 10000,
+        human_like: bool = True,
+        use_first: bool = False,
     ) -> None:
         """
-        Type text into an element.
+        Type text into an element with robust error handling.
 
         Args:
             selector: Element selector
             text: Text to type
             selector_type: Type of selector (css or xpath)
-            delay: Delay between keystrokes in milliseconds
+            delay: Base delay between keystrokes in milliseconds
+            clear_first: Whether to clear existing content first
+            timeout: Maximum time to wait for element in milliseconds
+            human_like: Whether to add random variation to typing delay
+            use_first: If True, use .first to avoid strict mode violations when
+                       multiple elements match the selector
         """
+        # Truncate selector and text for display
+        selector_display = selector[:50] + "..." if len(selector) > 50 else selector
+        text_display = text[:20] + "..." if len(text) > 20 else text
+        _browser_logger.start_action("TYPE", f"'{text_display}' -> {selector_display}")
+        
         try:
-            if selector_type == "xpath":
-                await self.page.locator(f"xpath={selector}").fill(text)
-            else:
-                await self.page.locator(selector).fill(text)
-            logger.info(f"Typed text into element: {selector}")
+            # Add human-like delay before typing
+            if human_like:
+                await self._human_delay()
+            
+            locator = self._get_locator(selector, selector_type, use_first=use_first)
+            
+            # Wait for element to be visible
+            await locator.wait_for(state="visible", timeout=timeout)
+            
+            # Add random variation to typing delay if human_like
+            actual_delay = delay
+            if human_like:
+                actual_delay = random.randint(self.MIN_TYPING_DELAY, self.MAX_TYPING_DELAY)
+            
+            # Try fill first (fastest method) - but less human-like
+            # Only use fill() if not trying to be human-like
+            if not human_like:
+                try:
+                    if clear_first:
+                        await locator.clear()
+                    await locator.fill(text)
+                    _browser_logger.end_action(True, f"filled {len(text)} chars")
+                    return
+                except Exception as fill_error:
+                    _browser_logger.log_step(f"Fill failed, trying type()")
+            
+            # Use type() for human-like character-by-character input
+            try:
+                await locator.click()  # Focus the element
+                if clear_first:
+                    await locator.press("Control+a")
+                    await locator.press("Backspace")
+                await locator.type(text, delay=actual_delay)
+                _browser_logger.end_action(True, f"typed {len(text)} chars")
+                return
+            except Exception as type_error:
+                error_msg = str(type_error).lower()
+                # Detect Playwright strict mode violation and auto-retry with .first
+                if "strict mode violation" in error_msg and not use_first:
+                    _browser_logger.log_retry(1, "strict mode violation, using .first")
+                    locator = self._get_locator(selector, selector_type, use_first=True)
+                    try:
+                        await locator.click()  # Focus
+                        if clear_first:
+                            await locator.press("Control+a")
+                            await locator.press("Backspace")
+                        await locator.type(text, delay=actual_delay)
+                        _browser_logger.end_action(True, f"typed {len(text)} chars (first match)")
+                        return
+                    except Exception as retry_error:
+                        logger.debug(f"Type with .first also failed: {retry_error}")
+                _browser_logger.log_step("Type failed, trying JS")
+            
+            # Last resort: JavaScript (not human-like but works)
+            try:
+                _browser_logger.log_step("Attempting JS input")
+                await locator.evaluate(f"el => {{ el.value = '{text}'; el.dispatchEvent(new Event('input', {{ bubbles: true }})); }}")
+                _browser_logger.end_action(True, f"JS filled {len(text)} chars")
+                return
+            except Exception as e:
+                _browser_logger.end_action(False, f"all methods failed: {e}")
+                raise ElementNotFoundError(f"All type methods failed for {selector}: {e}")
+                
         except Exception as e:
-            logger.error(f"Type text failed: {e}")
+            _browser_logger.end_action(False, str(e)[:50])
             raise ElementNotFoundError(f"Failed to type into element {selector}: {e}") from e
+    
+    def _get_locator(self, selector: str, selector_type: str, use_first: bool = False):
+        """
+        Get a Playwright locator for the given selector.
+        
+        Args:
+            selector: Element selector
+            selector_type: Type of selector (css or xpath)
+            use_first: If True, use .first to avoid strict mode violations when
+                       multiple elements match. This is the best-in-class Playwright
+                       approach for handling selectors that match multiple elements.
+        """
+        if selector_type == "xpath":
+            locator = self.page.locator(f"xpath={selector}")
+        else:
+            locator = self.page.locator(selector)
+        
+        # Use .first to get only the first matching element
+        # This is Playwright's recommended approach for handling multiple matches
+        if use_first:
+            return locator.first
+        return locator
 
     async def get_text(self, selector: str, selector_type: str = "css") -> str:
         """
