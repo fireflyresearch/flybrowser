@@ -1,143 +1,187 @@
 # FlyBrowser Documentation
 
-FlyBrowser is an LLM-powered browser automation framework that provides intelligent web interaction capabilities through natural language commands. It supports three deployment modes to accommodate different use cases: embedded library integration, standalone server deployment, and distributed cluster configuration.
+FlyBrowser is a browser automation and web scraping framework that uses Large Language Models to enable natural language control of web browsers. Instead of writing complex selectors and handling the intricacies of web page interaction manually, you describe what you want in plain English and FlyBrowser figures out how to accomplish it.
 
-## Documentation Overview
+## What Makes FlyBrowser Different
+
+Traditional browser automation requires you to know the exact structure of web pages: CSS selectors, XPath expressions, waiting for specific elements, handling dynamic content, and dealing with the countless edge cases that make web automation brittle. FlyBrowser takes a fundamentally different approach.
+
+When you tell FlyBrowser to "click the login button", it uses an LLM to understand the page structure, identify the relevant element, and perform the action. When you ask it to "extract all product prices from this page", it reasons about the page layout and returns structured data. This natural language interface means your automation scripts are more readable, more maintainable, and more resilient to website changes.
+
+## Core Capabilities
+
+FlyBrowser provides several primary methods for browser automation:
+
+**Navigation and Actions**
+
+- `goto(url)` - Navigate directly to a URL
+- `navigate(instruction)` - Navigate using natural language ("go to the login page")
+- `act(instruction)` - Perform actions ("click the submit button", "type hello in the search box")
+
+**Data Extraction**
+
+- `extract(query, schema)` - Extract data from pages using natural language queries with optional JSON Schema validation
+- `observe(query)` - Find and analyze elements on the page
+
+**Autonomous Operations**
+
+- `agent(task, context)` - Execute complex multi-step tasks autonomously
+- `execute_task(task)` - Run tasks with full ReAct reasoning
+
+**Recording and Streaming**
+
+- `screenshot()` - Capture page screenshots
+- `start_recording()` / `stop_recording()` - Record browser sessions
+- `start_stream()` / `stop_stream()` - Live stream browser sessions via HLS, DASH, or RTMP
+
+## Deployment Modes
+
+FlyBrowser runs in three modes, all using the same API:
+
+**Embedded Mode** - The browser runs directly in your Python process. Ideal for scripts, notebooks, and development.
+
+```python
+async with FlyBrowser(llm_provider="openai", api_key="sk-...") as browser:
+    await browser.goto("https://example.com")
+    data = await browser.extract("Get the main heading")
+```
+
+**Standalone Server Mode** - FlyBrowser runs as an HTTP server, allowing multiple clients to create and manage browser sessions.
+
+```python
+async with FlyBrowser(endpoint="http://localhost:8000") as browser:
+    await browser.goto("https://example.com")
+    data = await browser.extract("Get the main heading")
+```
+
+**Cluster Mode** - Multiple FlyBrowser nodes coordinate via Raft consensus for high availability, automatic failover, and load balancing.
+
+The same code works in all three modes. The only difference is how you initialize the FlyBrowser instance.
+
+## Supported LLM Providers
+
+FlyBrowser works with multiple LLM providers:
+
+- **OpenAI** - GPT-4o, GPT-4o-mini, GPT-3.5-turbo
+- **Anthropic** - Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku
+- **Google** - Gemini 2.0 Flash, Gemini 1.5 Pro
+- **Ollama** - Local models like Qwen3, Llama 3.2, Gemma 3
+
+Vision-capable models enable FlyBrowser to analyze screenshots for better understanding of complex page layouts.
+
+## Documentation Sections
 
 ### Getting Started
 
-- [Getting Started Guide](getting-started.md) - Installation, configuration, and first steps with FlyBrowser
-- [Jupyter Notebooks Guide](jupyter-notebooks.md) - Using FlyBrowser in Jupyter, JupyterLab, and Google Colab
+- [Installation](getting-started/installation.md) - System requirements and installation methods
+- [Quickstart](getting-started/quickstart.md) - Your first automation in five minutes
+- [Core Concepts](getting-started/concepts.md) - Understanding sessions, actions, and the ReAct framework
 
-### Deployment Guides
+### User Guides
 
-Step-by-step instructions for each deployment mode:
+- [Basic Automation](guides/basic-automation.md) - Navigation, clicking, typing, and scrolling
+- [Data Extraction](guides/data-extraction.md) - Extracting structured data from web pages
+- [Form Automation](guides/form-automation.md) - Filling and submitting forms
+- [Multi-Page Workflows](guides/multi-page-workflows.md) - Complex tasks spanning multiple pages
+- [Authentication](guides/authentication.md) - Handling login flows securely
+- [Error Handling](guides/error-handling.md) - Dealing with failures and retries
 
-- [Embedded Mode](deployment/embedded.md) - Integrate FlyBrowser directly into your Python application
-- [Standalone Mode](deployment/standalone.md) - Run FlyBrowser as a standalone HTTP service
-- [Cluster Mode](deployment/cluster.md) - Deploy a distributed cluster with high availability and horizontal scaling
+### Features
 
-### Reference Documentation
-
-Complete technical reference for all FlyBrowser interfaces:
-
-- [SDK Reference](reference/sdk.md) - Python SDK classes, methods, and parameters
-- [REST API Reference](reference/api.md) - HTTP endpoints, request/response schemas, and authentication
-- [CLI Reference](reference/cli.md) - Command-line tools and options
-- [Configuration Reference](reference/configuration.md) - Environment variables and configuration options
+- [Natural Language Actions](features/natural-language-actions.md) - The act() method in depth
+- [Intelligent Extraction](features/intelligent-extraction.md) - The extract() method in depth
+- [Autonomous Agent](features/autonomous-agent.md) - The agent() method for complex tasks
+- [Element Observation](features/element-observation.md) - The observe() method
+- [Navigation](features/navigation.md) - URL and natural language navigation
+- [Screenshots and Recording](features/screenshots-recording.md) - Capturing browser sessions
+- [Live Streaming](features/live-streaming.md) - HLS, DASH, and RTMP streaming
+- [PII Protection](features/pii-protection.md) - Secure credential handling
 
 ### Architecture
 
-- [Architecture Overview](../ARCHITECTURE.md) - System design, components, and internal structure
+- [System Overview](architecture/overview.md) - High-level architecture
+- [ReAct Framework](architecture/react-framework.md) - The reasoning and acting loop
+- [Tool System](architecture/tool-system.md) - How browser tools work
+- [Memory System](architecture/memory-system.md) - Context and memory management
+- [LLM Integration](architecture/llm-integration.md) - Provider abstraction and capabilities
+- [Response Validation](architecture/response-validation.md) - Ensuring quality outputs
 
-## Deployment Mode Comparison
+### Deployment
 
-### Embedded Mode
+- [Embedded Mode](deployment/embedded-mode.md) - Running in scripts and notebooks
+- [Standalone Server](deployment/standalone-server.md) - Single server deployment
+- [Cluster Mode](deployment/cluster-mode.md) - Distributed high-availability deployment
+- [Docker](deployment/docker.md) - Container deployment
+- [Kubernetes](deployment/kubernetes.md) - Orchestrated deployment
 
-Direct Python library integration within your application process.
+### Reference
 
-**Use Cases:**
-- Scripts and automation tools
-- Testing frameworks
-- Applications requiring tight integration
-- Single-machine deployments
+- [SDK Reference](reference/sdk.md) - Complete Python API documentation
+- [REST API Reference](reference/rest-api.md) - HTTP endpoint documentation
+- [CLI Reference](reference/cli.md) - Command-line tools
+- [Configuration](reference/configuration.md) - All configuration options
+- [Environment Variables](reference/environment-variables.md) - Environment variable reference
 
-**Characteristics:**
-- No network overhead
-- Synchronous and asynchronous APIs
-- Direct access to all features
-- Browser lifecycle managed by your application
+### Advanced Topics
 
-### Standalone Mode
+- [Custom Tools](advanced/custom-tools.md) - Creating your own browser tools
+- [Custom LLM Providers](advanced/custom-llm-providers.md) - Adding new LLM backends
+- [Performance Tuning](advanced/performance-tuning.md) - Optimization strategies
+- [Troubleshooting](advanced/troubleshooting.md) - Common issues and solutions
 
-HTTP service running as a separate process or container.
+### Examples
 
-**Use Cases:**
-- Microservice architectures
-- Language-agnostic integration
-- Containerized deployments
-- Development and testing environments
+- [Examples Overview](examples/index.md) - Guide to example code
+- [Web Scraping](examples/web-scraping.md) - Scraping examples
+- [UI Testing](examples/ui-testing.md) - Testing examples
+- [Workflow Automation](examples/workflow-automation.md) - End-to-end automation examples
 
-**Characteristics:**
-- REST API interface
-- Session management
-- Process isolation
-- Single-node deployment
+## Quick Example
 
-### Cluster Mode
+Here is a complete example that navigates to a website, performs some actions, and extracts data:
 
-Distributed deployment with Raft consensus for high availability.
-
-**Use Cases:**
-- Production workloads requiring high availability
-- Horizontal scaling for increased throughput
-- Multi-tenant environments
-- Mission-critical automation
-
-**Characteristics:**
-- Automatic leader election
-- Session replication across nodes
-- Fault tolerance (survives minority node failures)
-- Dynamic cluster scaling
-
-## Quick Start
-
-### Installation
-
-```bash path=null start=null
-curl -fsSL https://get.flybrowser.dev | bash
-# Or from source:
-git clone https://github.com/firefly-oss/flybrowsers.git
-cd flybrowsers && ./install.sh
-```
-
-### Embedded Usage
-
-```python path=null start=null
+```python
+import asyncio
 from flybrowser import FlyBrowser
 
 async def main():
-    browser = FlyBrowser(
-        llm_provider="openai",     # or: anthropic, gemini, ollama
-        llm_model="gpt-5.2"        # uses provider default if not set
-    )
-    await browser.start()
-    
-    await browser.goto("https://example.com")
-    data = await browser.extract("Extract the main heading")
-    
-    await browser.stop()
+    async with FlyBrowser(
+        llm_provider="openai",
+        api_key="sk-...",
+        headless=True,
+    ) as browser:
+        # Navigate to the page
+        await browser.goto("https://news.ycombinator.com")
+        
+        # Extract structured data
+        result = await browser.extract(
+            "Get the titles and scores of the top 5 stories",
+            schema={
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "score": {"type": "integer"}
+                    }
+                }
+            }
+        )
+        
+        if result.success:
+            for story in result.data:
+                print(f"{story['title']} - {story['score']} points")
+        
+        # Show execution statistics
+        result.pprint()
+
+asyncio.run(main())
 ```
 
-### Standalone Server
+## Version
 
-```bash path=null start=null
-flybrowser-serve --host 0.0.0.0 --port 8000
-```
-
-### Cluster Deployment
-
-```bash path=null start=null
-# Node 1 (initial leader)
-flybrowser-serve --cluster --node-id node1 --raft-port 4321 --port 8001
-
-# Node 2
-flybrowser-serve --cluster --node-id node2 --raft-port 4322 --port 8002 \
-    --peers node1:4321
-
-# Node 3
-flybrowser-serve --cluster --node-id node3 --raft-port 4323 --port 8003 \
-    --peers node1:4321,node2:4322
-```
-
-## Requirements
-
-- Python 3.9 or higher
-- Playwright browsers (installed automatically)
-- LLM provider access:
-  - **Cloud providers**: OpenAI, Anthropic, or Google Gemini (API key required)
-  - **Local providers**: Ollama, LM Studio, LocalAI, or vLLM (no API key needed)
+This documentation covers FlyBrowser version 1.26.1.
 
 ## License
 
-FlyBrowser is released under the MIT License.
+FlyBrowser is licensed under the Apache License 2.0. See the LICENSE file for details.

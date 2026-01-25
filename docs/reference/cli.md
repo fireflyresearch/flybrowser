@@ -1,798 +1,415 @@
 # CLI Reference
 
-This document provides complete reference documentation for FlyBrowser command-line tools.
+FlyBrowser provides a comprehensive command-line interface for installation, configuration, and operation.
 
-## Overview
+## Quick Reference
 
-FlyBrowser provides three CLI commands:
+```bash
+# Interactive mode (default)
+flybrowser                    # Launch REPL
+
+# Core commands
+flybrowser repl               # Launch interactive REPL
+flybrowser serve              # Start API service
+flybrowser doctor             # Diagnose installation
+flybrowser version            # Show version
+
+# Setup and management
+flybrowser setup              # Installation wizard
+flybrowser cluster            # Cluster management
+flybrowser admin              # Administrative commands
+flybrowser uninstall          # Uninstall FlyBrowser
+
+# Media management
+flybrowser stream             # Manage live streams
+flybrowser recordings         # Manage recordings
+```
+
+## Global Options
+
+Options available for all commands:
+
+| Option | Description |
+|--------|-------------|
+| `--log-level` | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO) |
+| `--human-readable` | Use human-readable log format instead of JSON |
+| `--help` | Show help message |
+
+## Commands
+
+### flybrowser (default)
+
+When run without arguments, launches the interactive REPL.
+
+```bash
+flybrowser
+```
+
+### flybrowser repl
+
+Launch the interactive REPL (Read-Eval-Print Loop) for browser automation.
+
+```bash
+flybrowser repl [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--provider` | `-p` | openai | LLM provider (openai, anthropic, ollama, gemini) |
+| `--model` | `-m` | (provider default) | LLM model to use |
+| `--headless` | | True | Run browser in headless mode |
+| `--no-headless` | | | Run browser with visible UI |
+| `--api-key` | | (env var) | LLM API key |
+| `--verbosity` | `-v` | normal | Log verbosity: silent, minimal, normal, verbose, debug |
+
+**Examples:**
+
+```bash
+# Default (OpenAI, headless)
+flybrowser repl
+
+# Use Anthropic Claude
+flybrowser repl -p anthropic -m claude-3-5-sonnet-20241022
+
+# Visible browser
+flybrowser repl --no-headless
+
+# Local Ollama
+flybrowser repl -p ollama -m qwen3:8b
+
+# Debug mode
+flybrowser repl -v debug
+```
+
+### flybrowser serve
+
+Start the FlyBrowser REST API service.
+
+```bash
+flybrowser serve [OPTIONS]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host` | 0.0.0.0 | Host to bind |
+| `--port` | 8000 | Port to bind |
+| `--workers` | 1 | Number of worker processes |
+| `--reload` | False | Auto-reload on code changes |
+
+**Examples:**
+
+```bash
+# Default settings
+flybrowser serve
+
+# Custom port
+flybrowser serve --port 9000
+
+# Development mode with auto-reload
+flybrowser serve --reload
+
+# Production with multiple workers
+flybrowser serve --workers 4
+```
+
+### flybrowser doctor
+
+Run installation diagnostics to verify FlyBrowser is properly set up.
+
+```bash
+flybrowser doctor
+```
+
+**Checks performed:**
+
+1. Python version (requires 3.9+)
+2. FlyBrowser installation
+3. Playwright installation
+4. Browser availability (Chromium)
+5. LLM provider status (dynamic discovery)
+6. Configuration files
+
+**Example output:**
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║  FlyBrowser v1.26.1                                           ║
+╚═══════════════════════════════════════════════════════════════╝
+
+System Requirements
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[OK] Python 3.11.5
+[OK] FlyBrowser 1.26.1 installed
+[OK] Playwright installed
+[OK] Chromium browser available
+
+LLM Provider Status
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[OK]   OpenAI: API key configured
+[OK]   Anthropic: API key configured
+[INFO] Ollama: Available at localhost:11434
+[WARN] Google Gemini: No API key configured
+
+Summary
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[SUCCESS] All checks passed!
+```
+
+### flybrowser version
+
+Show version information.
+
+```bash
+flybrowser version [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--json` | `-j` | Output in JSON format |
+
+**Examples:**
+
+```bash
+# Simple output
+flybrowser version
+# Output: FlyBrowser 1.26.1
+
+# JSON output
+flybrowser version --json
+# Output:
+# {
+#   "flybrowser": "1.26.1",
+#   "python": "3.11.5",
+#   "platform": "Darwin",
+#   "architecture": "arm64"
+# }
+```
+
+### flybrowser setup
+
+Installation and configuration wizard.
+
+```bash
+flybrowser setup [COMMAND]
+```
+
+**Subcommands:**
 
 | Command | Description |
 |---------|-------------|
-| `flybrowser-serve` | Start the FlyBrowser HTTP server |
-| `flybrowser-cluster` | Cluster management and monitoring |
-| `flybrowser-admin` | Administrative operations |
+| `configure` | Interactive configuration wizard |
+| `install` | Install dependencies |
+| `browsers` | Install Playwright browsers |
 
-## flybrowser-serve
+**Examples:**
 
-Starts the FlyBrowser HTTP server in standalone or cluster mode.
+```bash
+# Interactive configuration
+flybrowser setup configure
 
-### Synopsis
-
-```bash path=null start=null
-flybrowser-serve [OPTIONS]
+# Install all browsers
+flybrowser setup browsers
 ```
 
-### Options
+### flybrowser cluster
 
-#### Server Options
+Cluster management commands.
+
+```bash
+flybrowser cluster [COMMAND]
+```
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `status` | Show cluster status |
+| `join` | Join a cluster |
+| `leave` | Leave the cluster |
+| `nodes` | List cluster nodes |
+
+**Examples:**
+
+```bash
+# Check cluster status
+flybrowser cluster status
+
+# Join a cluster
+flybrowser cluster join --coordinator http://coordinator:8000
+
+# List nodes
+flybrowser cluster nodes
+```
+
+### flybrowser admin
+
+Administrative commands.
+
+```bash
+flybrowser admin [COMMAND]
+```
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `sessions` | Manage sessions |
+| `cache` | Manage cache |
+| `logs` | View logs |
+
+### flybrowser stream
+
+Manage live streams.
+
+```bash
+flybrowser stream [COMMAND]
+```
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `start` | Start a stream |
+| `stop` | Stop a stream |
+| `status` | Get stream status |
+| `url` | Get stream URL |
+| `play` | Play stream in local player |
+| `web` | Open stream in browser |
+
+**Examples:**
+
+```bash
+# Start HLS stream
+flybrowser stream start <session_id> --protocol hls --quality high
+
+# Stop stream
+flybrowser stream stop <session_id>
+
+# Get status
+flybrowser stream status <session_id>
+
+# Open in browser
+flybrowser stream web <session_id>
+
+# Play with VLC
+flybrowser stream play <session_id> --player vlc
+```
+
+**Stream start options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--host` | `0.0.0.0` | Host address to bind |
-| `--port` | `8000` | HTTP port number |
-| `--workers` | `1` | Number of worker processes |
-| `--max-sessions` | `10` | Maximum concurrent browser sessions |
-| `--data-dir` | `./data` | Directory for persistent data |
-| `--reload` | `false` | Enable auto-reload for development |
-
-#### Cluster Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--cluster` | `false` | Enable cluster mode |
-| `--node-id` | (auto-generated) | Unique identifier for this node |
-| `--raft-port` | `4321` | Port for Raft consensus protocol |
-| `--peers` | (none) | Comma-separated list of peer addresses (`host:raft_port`) |
-
-#### Logging Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--log-level` | `info` | Log level: `debug`, `info`, `warning`, `error` |
-| `--log-file` | (none) | Path to log file (stdout if not specified) |
-
-### Examples
-
-#### Start in Standalone Mode
-
-```bash path=null start=null
-# Basic startup (starts on 0.0.0.0:8000)
-flybrowser-serve
-
-# Custom host and port
-flybrowser-serve --host 0.0.0.0 --port 8000
-
-# With session limit and workers
-flybrowser-serve --workers 4 --max-sessions 50 --data-dir /var/lib/flybrowser
-```
-
-#### Start in Cluster Mode
-
-```bash path=null start=null
-# First node (bootstrap)
-flybrowser-serve --cluster --node-id node1 --port 8001 --raft-port 4321
-
-# Additional node
-flybrowser-serve --cluster --node-id node2 --port 8002 --raft-port 4322 \
-    --peers node1:4321
-
-# Third node
-flybrowser-serve --cluster --node-id node3 --port 8003 --raft-port 4323 \
-    --peers node1:4321,node2:4322
-```
-
-#### Production Configuration
-
-```bash path=null start=null
-flybrowser-serve \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --workers 4 \
-    --max-sessions 100 \
-    --data-dir /var/lib/flybrowser \
-    --log-level info \
-    --log-file /var/log/flybrowser/server.log
-```
-
-## flybrowser-cluster
-
-Cluster management and monitoring tool.
-
-### Synopsis
-
-```bash path=null start=null
-flybrowser-cluster <COMMAND> [OPTIONS]
-```
-
-### Commands
-
-#### status
-
-Display cluster status.
-
-```bash path=null start=null
-flybrowser-cluster status [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--json` | `false` | Output in JSON format |
-
-**Example**:
-```bash path=null start=null
-flybrowser-cluster status --endpoint http://localhost:8001
-
-# Output:
-# Cluster Status
-# ==============
-# Leader: node1
-# Term: 5
-# Nodes: 3
-#
-# Node Details:
-#   node1: leader (192.168.1.10:4321)
-#   node2: follower (192.168.1.11:4322)
-#   node3: follower (192.168.1.12:4323)
-#
-# Cluster health: HEALTHY
-```
-
-#### nodes
-
-List cluster nodes.
-
-```bash path=null start=null
-flybrowser-cluster nodes [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--json` | `false` | Output in JSON format |
-
-**Example**:
-```bash path=null start=null
-flybrowser-cluster nodes --endpoint http://localhost:8001
-
-# Output:
-# Cluster Nodes
-# =============
-# node1 (leader)
-#   Address: 192.168.1.10:4321
-#   HTTP: 192.168.1.10:8001
-#   Status: healthy
-#   Sessions: 5
-```
-
-#### sessions
-
-List sessions across cluster.
-
-```bash path=null start=null
-flybrowser-cluster sessions [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--json` | `false` | Output in JSON format |
-
-**Example**:
-```bash path=null start=null
-flybrowser-cluster sessions --endpoint http://localhost:8001
-
-# Output:
-# Cluster Sessions
-# ================
-# Session ID        Node     Status   Created
-# sess_abc123       node1    active   2024-01-15 10:30
-# sess_def456       node2    active   2024-01-15 11:00
-```
-
-## flybrowser stream
-
-Manage live browser session streams.
-
-### Synopsis
-
-```bash path=null start=null
-flybrowser stream <COMMAND> [OPTIONS]
-```
-
-### Commands
-
-#### stream start
-
-Start a live stream for a browser session.
-
-```bash path=null start=null
-flybrowser stream start <SESSION_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `SESSION_ID` | Session identifier to stream |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--protocol` | `hls` | Streaming protocol: `hls`, `dash`, `rtmp` |
-| `--quality` | `medium` | Quality profile: `low_bandwidth`, `medium`, `high` |
-| `--codec` | `h264` | Video codec: `h264`, `h265`, `vp9` |
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
-# Start HLS stream with medium quality
-flybrowser stream start sess_abc123 --protocol hls --quality medium
-
-# Start high-quality H.265 stream
-flybrowser stream start sess_abc123 --protocol hls --quality high --codec h265
-
-# Stream to custom endpoint
-flybrowser stream start sess_abc123 --endpoint http://cluster.example.com:8000
-```
-
-#### stream stop
-
-Stop an active stream.
-
-```bash path=null start=null
-flybrowser stream stop <SESSION_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `SESSION_ID` | Session identifier |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
-flybrowser stream stop sess_abc123
-
-# Output:
-# {
-#   "stream_id": "stream_abc123",
-#   "success": true,
-#   "statistics": {
-#     "frames_sent": 1500,
-#     "bytes_sent": 15728640,
-#     "duration_seconds": 50,
-#     "avg_fps": 30
-#   }
-# }
-```
-
-#### stream status
-
-Get real-time status and metrics for an active stream.
-
-```bash path=null start=null
-flybrowser stream status <SESSION_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `SESSION_ID` | Session identifier |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
-flybrowser stream status sess_abc123
-
-# Output:
-# {
-#   "stream_id": "stream_abc123",
-#   "active": true,
-#   "health": "healthy",
-#   "current_fps": 30,
-#   "current_bitrate": 1500,
-#   "frames_sent": 450,
-#   "bytes_sent": 4718592,
-#   "viewer_count": 2,
-#   "buffer_health": 95
-# }
-```
-
-#### stream url
-
-Get the stream URL for viewing.
-
-```bash path=null start=null
-flybrowser stream url <SESSION_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `SESSION_ID` | Session identifier |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
-flybrowser stream url sess_abc123
-
-# Output:
-# http://localhost:8000/streams/stream_abc123/playlist.m3u8
-
-# Use with video player:
-vlc $(flybrowser stream url sess_abc123)
-```
-
-#### stream play
-
-Automatically play a stream with the best available player.
-
-```bash path=null start=null
-flybrowser stream play <SESSION_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `SESSION_ID` | Session identifier |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--player` | `auto` | Player to use: `auto`, `ffplay`, `vlc`, `mpv` |
-
-**Example**:
-```bash path=null start=null
-# Auto-detect and launch player
-flybrowser stream play sess_abc123
-
-# Use specific player
-flybrowser stream play sess_abc123 --player ffplay
-flybrowser stream play sess_abc123 --player vlc
-flybrowser stream play sess_abc123 --player mpv
-```
-
-The command will:
-1. Fetch the stream URL
-2. Auto-detect available players (ffplay, vlc, mpv)
-3. Launch the stream in the best available player
-
-Supported players:
-- **ffplay** (from FFmpeg) - Lightweight, command-line
-- **VLC** - Feature-rich, cross-platform
-- **mpv** - Modern, minimal player
-
-## flybrowser recordings
+| `--protocol` | hls | Streaming protocol: hls, dash, rtmp |
+| `--quality` | medium | Quality: low_bandwidth, medium, high |
+| `--codec` | h264 | Video codec: h264, h265, vp9 |
+| `--endpoint` | http://localhost:8000 | API endpoint |
+
+### flybrowser recordings
 
 Manage session recordings.
 
-### Synopsis
-
-```bash path=null start=null
-flybrowser recordings <COMMAND> [OPTIONS]
+```bash
+flybrowser recordings [COMMAND]
 ```
 
-### Commands
+**Subcommands:**
 
-#### recordings list
+| Command | Description |
+|---------|-------------|
+| `list` | List recordings |
+| `download` | Download a recording |
+| `delete` | Delete a recording |
+| `clean` | Clean old recordings |
 
-List available recordings.
+**Examples:**
 
-```bash path=null start=null
-flybrowser recordings list [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--session-id` | (none) | Filter by session ID |
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
+```bash
 # List all recordings
 flybrowser recordings list
 
-# List recordings for specific session
-flybrowser recordings list --session-id sess_abc123
+# List recordings for a session
+flybrowser recordings list --session-id abc123
 
-# Output:
-# {
-#   "recordings": [
-#     {
-#       "id": "rec_xyz789",
-#       "session_id": "sess_abc123",
-#       "created_at": "2026-01-21T10:30:00Z",
-#       "duration_seconds": 120,
-#       "file_size_mb": 24.5,
-#       "codec": "h264",
-#       "quality": "medium"
-#     }
-#   ],
-#   "total": 1
-# }
-```
+# Download a recording
+flybrowser recordings download rec_123 -o my_recording.mp4
 
-#### recordings download
-
-Download a recording.
-
-```bash path=null start=null
-flybrowser recordings download <RECORDING_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `RECORDING_ID` | Recording identifier |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--output`, `-o` | `recording.mp4` | Output file path |
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
-# Download with default name
-flybrowser recordings download rec_xyz789
-
-# Download with custom name
-flybrowser recordings download rec_xyz789 -o my_session.mp4
-
-# Output:
-# Downloading to my_session.mp4...
-# Progress: 100.0%
-# Downloaded successfully to my_session.mp4
-```
-
-#### recordings delete
-
-Delete a recording.
-
-```bash path=null start=null
-flybrowser recordings delete <RECORDING_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `RECORDING_ID` | Recording identifier |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
-flybrowser recordings delete rec_xyz789
-# Recording rec_xyz789 deleted successfully
-```
-
-#### recordings clean
-
-Clean old recordings based on age.
-
-```bash path=null start=null
-flybrowser recordings clean [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--older-than` | `7d` | Delete recordings older than (e.g., `7d`, `30d`) |
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
-# Clean recordings older than 7 days
-flybrowser recordings clean --older-than 7d
+# Delete a recording
+flybrowser recordings delete rec_123
 
 # Clean recordings older than 30 days
 flybrowser recordings clean --older-than 30d
-
-# Output:
-# Deleted: rec_abc123 (created 2026-01-01T10:00:00Z)
-# Deleted: rec_def456 (created 2026-01-05T15:30:00Z)
-# 
-# Cleaned 2 recordings older than 7 days
 ```
 
-## flybrowser-admin
+### flybrowser uninstall
 
-Administrative operations for session and node management.
+Uninstall FlyBrowser.
 
-### Synopsis
-
-```bash path=null start=null
-flybrowser-admin <COMMAND> <SUBCOMMAND> [OPTIONS]
+```bash
+flybrowser uninstall [OPTIONS]
 ```
 
-### Commands
+**Options:**
 
-#### sessions
-
-Manage browser sessions.
-
-##### sessions list
-
-List all sessions.
-
-```bash path=null start=null
-flybrowser-admin sessions list [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--json` | `false` | Output in JSON format |
-
-**Example**:
-```bash path=null start=null
-flybrowser-admin sessions list --endpoint http://localhost:8000
-
-# Output:
-# Sessions
-# ========
-# Session ID        Status   Created              URL
-# sess_abc123       active   2024-01-15 10:30     https://example.com
-# sess_def456       idle     2024-01-15 11:00     https://google.com
-```
-
-##### sessions kill
-
-Terminate a session.
-
-```bash path=null start=null
-flybrowser-admin sessions kill <SESSION_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `SESSION_ID` | Session identifier to terminate |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--force` | `false` | Force termination without cleanup |
-
-**Example**:
-```bash path=null start=null
-flybrowser-admin sessions kill sess_abc123 --endpoint http://localhost:8000
-# Session sess_abc123 terminated
-```
-
-##### sessions kill-all
-
-Terminate all sessions.
-
-```bash path=null start=null
-flybrowser-admin sessions kill-all [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--force` | `false` | Skip confirmation |
-
-**Example**:
-```bash path=null start=null
-flybrowser-admin sessions kill-all --endpoint http://localhost:8000 --force
-# Terminated 5 sessions
-```
-
-#### nodes
-
-Manage cluster nodes.
-
-##### nodes list
-
-List cluster nodes.
-
-```bash path=null start=null
-flybrowser-admin nodes list [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--json` | `false` | Output in JSON format |
-
-**Example**:
-```bash path=null start=null
-flybrowser-admin nodes list --endpoint http://localhost:8001
-```
-
-##### nodes drain
-
-Drain a node of all sessions before removal.
-
-```bash path=null start=null
-flybrowser-admin nodes drain <NODE_ID> [OPTIONS]
-```
-
-| Argument | Description |
-|----------|-------------|
-| `NODE_ID` | Node identifier to drain |
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--force` | `false` | Force drain without waiting |
-
-**Example**:
-```bash path=null start=null
-flybrowser-admin nodes drain node3 --endpoint http://localhost:8001
-# Draining node3...
-# Moved 4 sessions to other nodes
-# Node node3 drained successfully
-```
-
-#### cluster
-
-Cluster-level administrative operations.
-
-##### cluster rebalance
-
-Rebalance sessions across cluster nodes.
-
-```bash path=null start=null
-flybrowser-cluster rebalance [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--target` | (none) | Target node for sessions |
-
-##### cluster step-down
-
-Force the current leader to step down and trigger a new election.
-
-```bash path=null start=null
-flybrowser-cluster step-down [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-
-**Example**:
-```bash path=null start=null
-flybrowser-admin cluster step-down --endpoint http://localhost:8001
-# Leader node1 stepped down
-# New leader: node2
-```
-
-#### backup
-
-Backup and restore operations.
-
-##### backup create
-
-Create a backup of the cluster state.
-
-```bash path=null start=null
-flybrowser-admin backup create [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--endpoint` | `http://localhost:8000` | Server endpoint |
-| `--output` | `flybrowser-backup.tar.gz` | Output file path |
-
-**Example**:
-```bash path=null start=null
-flybrowser-admin backup create \
-    --endpoint http://localhost:8001 \
-    --output /backup/flybrowser-$(date +%Y%m%d).tar.gz
-# Backup created: /backup/flybrowser-20240115.tar.gz
-# Size: 15.2 MB
-```
-
-##### backup restore
-
-Restore from a backup file.
-
-```bash path=null start=null
-flybrowser-admin backup restore [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--input` | (required) | Input backup file path |
-| `--data-dir` | `./data` | Target data directory |
-| `--force` | `false` | Overwrite existing data |
-
-**Example**:
-```bash path=null start=null
-flybrowser-admin backup restore \
-    --input /backup/flybrowser-20240115.tar.gz \
-    --data-dir /var/lib/flybrowser \
-    --force
-# Restored backup to /var/lib/flybrowser
-```
+| Option | Description |
+|--------|-------------|
+| `--keep-config` | Keep configuration files |
+| `--keep-cache` | Keep cache files |
+| `--yes` | Skip confirmation |
 
 ## Environment Variables
 
-CLI tools respect the following environment variables:
+The CLI respects these environment variables:
 
-| Variable | CLI Equivalent | Description |
-|----------|----------------|-------------|
-| `FLYBROWSER_HOST` | `--host` | Server host (default: 0.0.0.0) |
-| `FLYBROWSER_PORT` | `--port` | Server port (default: 8000) |
-| `FLYBROWSER_WORKERS` | `--workers` | Number of workers (default: 1) |
-| `FLYBROWSER_API_KEY` | N/A | API key for authentication |
-| `FLYBROWSER_LOG_LEVEL` | `--log-level` | Logging level (default: info) |
-| `FLYBROWSER_DATA_DIR` | `--data-dir` | Data directory (default: ./data) |
-| `FLYBROWSER_CLUSTER_ENABLED` | `--cluster` | Enable cluster mode |
-| `FLYBROWSER_NODE_ID` | `--node-id` | Cluster node ID |
-| `FLYBROWSER_RAFT_PORT` | `--raft-port` | Raft port (default: 4321) |
-| `FLYBROWSER_CLUSTER_PEERS` | `--peers` | Cluster peers |
+| Variable | Description |
+|----------|-------------|
+| `FLYBROWSER_LOG_LEVEL` | Default log level |
+| `FLYBROWSER_LOG_FORMAT` | Log format (json or human) |
+| `FLYBROWSER_LLM_PROVIDER` | Default LLM provider |
+| `FLYBROWSER_LLM_MODEL` | Default LLM model |
+| `FLYBROWSER_LOG_VERBOSITY` | Default verbosity |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `GOOGLE_API_KEY` | Google Gemini API key |
 
-Command-line options take precedence over environment variables.
+## Configuration Files
+
+The CLI looks for configuration in these locations:
+
+1. `.env` in current directory
+2. `~/.flybrowser/config`
+3. `~/.config/flybrowser/config`
+
+Run `flybrowser setup configure` to create a configuration file.
 
 ## Exit Codes
 
 | Code | Description |
 |------|-------------|
-| `0` | Success |
-| `1` | General error |
-| `2` | Invalid arguments |
-| `3` | Connection error |
-| `4` | Authentication error |
-| `5` | Resource not found |
-| `6` | Timeout |
+| 0 | Success |
+| 1 | General error or check failed |
+| 130 | Interrupted (Ctrl+C) |
 
-## Output Formats
+## Interactive REPL Commands
 
-Most commands support multiple output formats:
+When using `flybrowser repl`, these commands are available:
 
-### Table Format (default)
+| Command | Description |
+|---------|-------------|
+| `goto <url>` | Navigate to URL |
+| `extract <query>` | Extract data |
+| `act <instruction>` | Perform action |
+| `screenshot` | Take screenshot |
+| `help` | Show available commands |
+| `exit` or `quit` | Exit REPL |
 
-Human-readable tabular output:
+## See Also
 
-```bash path=null start=null
-flybrowser-admin sessions list --format table
-```
-
-### JSON Format
-
-Machine-readable JSON output:
-
-```bash path=null start=null
-flybrowser-admin sessions list --format json
-```
-
-```json path=null start=null
-{
-    "sessions": [
-        {
-            "session_id": "sess_abc123",
-            "status": "active",
-            "created_at": "2024-01-15T10:30:00Z"
-        }
-    ],
-    "total": 1
-}
-```
-
-## Shell Completion
-
-Generate shell completion scripts:
-
-### Bash
-
-```bash path=null start=null
-flybrowser-serve --completion bash > /etc/bash_completion.d/flybrowser
-```
-
-### Zsh
-
-```bash path=null start=null
-flybrowser-serve --completion zsh > ~/.zsh/completions/_flybrowser
-```
-
-### Fish
-
-```bash path=null start=null
-flybrowser-serve --completion fish > ~/.config/fish/completions/flybrowser.fish
-```
+- [SDK Reference](sdk.md) - Python SDK documentation
+- [REST API Reference](rest-api.md) - HTTP API documentation
+- [Configuration](configuration.md) - Configuration options

@@ -1,645 +1,362 @@
-# Standalone Mode Deployment
+# Standalone Deployment
 
-Standalone mode runs FlyBrowser as an HTTP service, exposing a REST API for browser automation. This deployment mode is suitable for microservice architectures, language-agnostic integration, and scenarios requiring process isolation.
+Standalone deployment runs FlyBrowser as a separate server process that clients connect to via REST API or the Python client. This is ideal for multi-client scenarios and production single-server deployments.
 
 ## Overview
 
-In standalone mode, FlyBrowser runs as a separate process or container, accepting HTTP requests and managing browser sessions independently. Clients interact with the service through a REST API.
+In standalone mode:
+- FlyBrowser runs as a dedicated service
+- Clients connect via HTTP/REST API
+- Browser pool manages multiple concurrent sessions
+- Supports multiple simultaneous clients
+- Process isolation for better stability
 
-**Advantages:**
-- Language-agnostic access via HTTP
-- Process isolation from client applications
-- Suitable for containerized deployments
-- Session management across multiple clients
+## When to Use
 
-**Considerations:**
-- Network latency between client and service
-- Single point of failure without clustering
-- Requires separate deployment and management
+Standalone deployment is best for:
 
-## Installation
-
-Install FlyBrowser from source:
-
-```bash path=null start=null
-git clone https://github.com/firefly-oss/flybrowsers.git
-cd flybrowsers
-./install.sh
-```
+- Multi-client applications
+- Microservice architectures
+- Single-server production deployments
+- Separation of concerns (browser service vs application)
+- Language-agnostic access (any language can use REST API)
 
 ## Starting the Server
 
-### Basic Startup
+### Using CLI
 
-Start the server with default settings:
-
-```bash path=null start=null
+```bash
+# Basic start
 flybrowser-serve
-```
 
-This starts the server on `http://0.0.0.0:8000`.
-
-### Custom Host and Port
-
-```bash path=null start=null
+# Custom host and port
 flybrowser-serve --host 0.0.0.0 --port 8000
+
+# Development mode with auto-reload
+flybrowser-serve --reload
+
+# Production mode with multiple workers
+flybrowser-serve --workers 4
+
+# Custom log level
+flybrowser-serve --log-level debug
 ```
 
-### Full Configuration
+### Using Python
 
-```bash path=null start=null
-flybrowser-serve \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --workers 4 \
-    --max-sessions 50 \
-    --data-dir /var/lib/flybrowser \
-    --log-level info
+```python
+import uvicorn
+from flybrowser.service.app import app
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        workers=4,
+    )
 ```
 
-### Command-Line Options
+### Using Docker
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--host` | `0.0.0.0` | Host address to bind |
-| `--port` | `8000` | Port number |
-| `--workers` | `1` | Number of worker processes |
-| `--max-sessions` | `10` | Maximum concurrent sessions |
-| `--data-dir` | `./data` | Directory for persistent data |
-| `--log-level` | `info` | Log level (debug, info, warning, error) |
-| `--reload` | (flag) | Enable auto-reload for development |
+```bash
+docker run -p 8000:8000 flybrowser/flybrowser:latest
+```
 
-## Python Client
+## Configuration
 
-The `FlyBrowserClient` class provides a Python interface to the standalone server:
+### Server Configuration
 
-```python path=null start=null
+Configure via environment variables:
+
+```bash
+# Server settings
+export FLYBROWSER_HOST=0.0.0.0
+export FLYBROWSER_PORT=8000
+export FLYBROWSER_WORKERS=4
+export FLYBROWSER_LOG_LEVEL=INFO
+
+# Deployment mode
+export FLYBROWSER_DEPLOYMENT_MODE=standalone
+
+# Session limits
+export FLYBROWSER_MAX_SESSIONS=100
+export FLYBROWSER_SESSION_TIMEOUT=3600
+```
+
+### Browser Pool Configuration
+
+```bash
+# Pool settings
+export FLYBROWSER_POOL__MIN_SIZE=1
+export FLYBROWSER_POOL__MAX_SIZE=10
+export FLYBROWSER_POOL__IDLE_TIMEOUT_SECONDS=300
+export FLYBROWSER_POOL__MAX_SESSION_AGE_SECONDS=3600
+export FLYBROWSER_POOL__HEADLESS=true
+export FLYBROWSER_POOL__BROWSER_TYPE=chromium
+```
+
+### Recording Configuration
+
+```bash
+# Recording settings
+export FLYBROWSER_RECORDING_ENABLED=true
+export FLYBROWSER_RECORDING_OUTPUT_DIR=/data/recordings
+export FLYBROWSER_RECORDING_RETENTION_DAYS=7
+```
+
+### CORS Configuration
+
+```bash
+# Allow specific origins
+export FLYBROWSER_CORS_ORIGINS='["https://app.example.com"]'
+
+# Allow all origins (development only)
+export FLYBROWSER_CORS_ORIGINS='["*"]'
+```
+
+## Client Connection
+
+### Python Client
+
+```python
 from flybrowser import FlyBrowserClient
 
-# Connect to the server
-client = FlyBrowserClient(
-    endpoint="http://localhost:8000",
-    api_key="your-api-key"  # Optional, for authenticated servers
-)
+# Connect to server
+client = FlyBrowserClient("http://localhost:8000")
 
-# Create a session with any supported provider
-session = await client.create_session(
-    llm_provider="openai",      # or: anthropic, gemini, ollama, vllm, etc.
-    llm_model="gpt-5.2",        # uses provider default if not set
-    headless=True,
-    browser_type="chromium"
-)
+# Create session
+async with client.session() as browser:
+    await browser.goto("https://example.com")
+    data = await browser.extract("Get the title")
+    print(data)
+```
 
-session_id = session["session_id"]
+### REST API
+
+```bash
+# Create session
+SESSION_ID=$(curl -X POST http://localhost:8000/api/v1/sessions \
+  -H "Content-Type: application/json" | jq -r '.session_id')
 
 # Navigate
-await client.navigate(session_id, "https://example.com")
+curl -X POST "http://localhost:8000/api/v1/sessions/$SESSION_ID/navigate" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
 
-# Extract data
-result = await client.extract(session_id, "Extract the page title")
+# Extract
+curl -X POST "http://localhost:8000/api/v1/sessions/$SESSION_ID/extract" \
+  -H "Content-Type: application/json" \
+  -d '{"instruction": "Get the page title"}'
 
-# Close the session
-await client.close_session(session_id)
+# Close session
+curl -X DELETE "http://localhost:8000/api/v1/sessions/$SESSION_ID"
 ```
 
-### Complete Client Example
+### API Endpoints
 
-```python path=null start=null
-import asyncio
-from flybrowser import FlyBrowserClient
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/sessions` | POST | Create new session |
+| `/api/v1/sessions/{id}` | GET | Get session info |
+| `/api/v1/sessions/{id}` | DELETE | Close session |
+| `/api/v1/sessions/{id}/navigate` | POST | Navigate to URL |
+| `/api/v1/sessions/{id}/act` | POST | Perform action |
+| `/api/v1/sessions/{id}/extract` | POST | Extract data |
+| `/api/v1/sessions/{id}/agent` | POST | Run agent task |
+| `/api/v1/sessions/{id}/screenshot` | GET | Take screenshot |
+| `/health` | GET | Health check |
+| `/metrics` | GET | Prometheus metrics |
 
-async def main():
-    client = FlyBrowserClient(endpoint="http://localhost:8000")
-    
-    try:
-        # Create a new browser session
-        session = await client.create_session(
-            llm_provider="openai",
-            llm_model="gpt-5.2",
-            headless=True
-        )
-        session_id = session["session_id"]
-        
-        # Perform navigation
-        await client.navigate(session_id, "https://example.com")
-        
-        # Extract data
-        result = await client.extract(
-            session_id,
-            "What is the main heading on this page?"
-        )
-        print(f"Extracted: {result}")
-        
-        # Perform actions
-        await client.action(session_id, "Click the About link")
-        
-        # Take a screenshot
-        screenshot = await client.screenshot(session_id)
-        with open("screenshot.png", "wb") as f:
-            f.write(screenshot)
-            
-    finally:
-        # Always close the session
-        await client.close_session(session_id)
+## Health Monitoring
 
-asyncio.run(main())
+### Health Check Endpoint
+
+```bash
+curl http://localhost:8000/health
+# {"status": "healthy", "sessions": 5, "pool_available": 5}
 ```
 
-## REST API Usage
+### Metrics Endpoint
 
-### Create Session
-
-```bash path=null start=null
-# With OpenAI
-curl -X POST http://localhost:8000/sessions \
-    -H "Content-Type: application/json" \
-    -d '{
-        "llm_provider": "openai",
-        "llm_model": "gpt-5.2",
-        "headless": true,
-        "browser_type": "chromium"
-    }'
-
-# With Google Gemini
-curl -X POST http://localhost:8000/sessions \
-    -H "Content-Type: application/json" \
-    -d '{
-        "llm_provider": "gemini",
-        "llm_model": "gemini-2.0-flash",
-        "headless": true
-    }'
-
-# With local Ollama
-curl -X POST http://localhost:8000/sessions \
-    -H "Content-Type: application/json" \
-    -d '{
-        "llm_provider": "ollama",
-        "llm_model": "qwen3:8b",
-        "headless": true
-    }'
+```bash
+curl http://localhost:8000/metrics
+# Prometheus-format metrics
 ```
 
-Response:
+### Monitoring Setup
 
-```json path=null start=null
-{
-    "session_id": "sess_abc123",
-    "status": "created"
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'flybrowser'
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: /metrics
+```
+
+## Production Considerations
+
+### Process Management
+
+Use a process manager like systemd or supervisord:
+
+**systemd service:**
+
+```ini
+# /etc/systemd/system/flybrowser.service
+[Unit]
+Description=FlyBrowser Service
+After=network.target
+
+[Service]
+Type=simple
+User=flybrowser
+WorkingDirectory=/opt/flybrowser
+ExecStart=/usr/local/bin/flybrowser-serve --workers 4
+Restart=always
+RestartSec=5
+Environment=FLYBROWSER_LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# Enable and start
+sudo systemctl enable flybrowser
+sudo systemctl start flybrowser
+```
+
+**supervisord:**
+
+```ini
+# /etc/supervisor/conf.d/flybrowser.conf
+[program:flybrowser]
+command=/usr/local/bin/flybrowser-serve --workers 4
+directory=/opt/flybrowser
+user=flybrowser
+autostart=true
+autorestart=true
+stderr_logfile=/var/log/flybrowser/err.log
+stdout_logfile=/var/log/flybrowser/out.log
+```
+
+### Reverse Proxy
+
+**nginx configuration:**
+
+```nginx
+upstream flybrowser {
+    server 127.0.0.1:8000;
 }
-```
 
-### Navigate
-
-```bash path=null start=null
-curl -X POST http://localhost:8000/sessions/sess_abc123/navigate \
-    -H "Content-Type: application/json" \
-    -d '{
-        "url": "https://example.com"
-    }'
-```
-
-### Extract Data
-
-```bash path=null start=null
-curl -X POST http://localhost:8000/sessions/sess_abc123/extract \
-    -H "Content-Type: application/json" \
-    -d '{
-        "query": "Extract the main heading"
-    }'
-```
-
-Response:
-
-```json path=null start=null
-{
-    "result": "Example Domain"
-}
-```
-
-### Perform Action
-
-```bash path=null start=null
-curl -X POST http://localhost:8000/sessions/sess_abc123/action \
-    -H "Content-Type: application/json" \
-    -d '{
-        "command": "Click the More information link"
-    }'
-```
-
-### Screenshot
-
-```bash path=null start=null
-curl -X GET http://localhost:8000/sessions/sess_abc123/screenshot \
-    --output screenshot.png
-```
-
-### Close Session
-
-```bash path=null start=null
-curl -X DELETE http://localhost:8000/sessions/sess_abc123
-```
-
-### List Sessions
-
-```bash path=null start=null
-curl -X GET http://localhost:8000/sessions
-```
-
-Response:
-
-```json path=null start=null
-{
-    "sessions": [
-        {
-            "session_id": "sess_abc123",
-            "status": "active",
-            "created_at": "2024-01-15T10:30:00Z"
-        }
-    ],
-    "total": 1
-}
-```
-
-### Run Workflow
-
-```bash path=null start=null
-curl -X POST http://localhost:8000/sessions/sess_abc123/workflow \
-    -H "Content-Type: application/json" \
-    -d '{
-        "workflow": {
-            "name": "example_workflow",
-            "steps": [
-                {"action": "goto", "url": "https://example.com"},
-                {"action": "extract", "query": "Get the page title"}
-            ]
-        }
-    }'
-```
-
-### Health Check
-
-```bash path=null start=null
-curl -X GET http://localhost:8000/health
-```
-
-## Docker Deployment
-
-### Dockerfile
-
-```dockerfile path=null start=null
-FROM python:3.11-slim
-
-# Install system dependencies for Playwright
-RUN apt-get update && apt-get install -y \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-# Install FlyBrowser from source
-COPY . /app
-RUN pip install -e .
-
-# Install Playwright browsers
-RUN playwright install chromium
-
-# Expose the service port
-EXPOSE 8000
-
-# Run the server
-CMD ["flybrowser-serve", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### Build and Run
-
-```bash path=null start=null
-# Build the image
-docker build -t flybrowser-server .
-
-# Run the container
-docker run -d \
-    --name flybrowser \
-    -p 8000:8000 \
-    -e OPENAI_API_KEY=your-key \
-    -e GOOGLE_API_KEY=your-google-key \
-    -e ANTHROPIC_API_KEY=your-anthropic-key \
-    flybrowser-server
-```
-
-### Docker Compose
-
-```yaml path=null start=null
-version: "3.8"
-
-services:
-  flybrowser:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-    volumes:
-      - flybrowser-data:/var/lib/flybrowser
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-volumes:
-  flybrowser-data:
-```
-
-## Kubernetes Deployment
-
-### Deployment Manifest
-
-```yaml path=null start=null
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: flybrowser
-  labels:
-    app: flybrowser
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: flybrowser
-  template:
-    metadata:
-      labels:
-        app: flybrowser
-    spec:
-      containers:
-        - name: flybrowser
-          image: flybrowser-server:latest
-          ports:
-        - containerPort: 8000
-          env:
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: flybrowser-secrets
-                  key: openai-api-key
-          resources:
-            requests:
-              memory: "512Mi"
-              cpu: "250m"
-            limits:
-              memory: "2Gi"
-              cpu: "1000m"
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 30
-            periodSeconds: 10
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 5
-            periodSeconds: 5
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: flybrowser
-spec:
-  selector:
-    app: flybrowser
-  ports:
-    - port: 80
-      targetPort: 8000
-  type: ClusterIP
-```
-
-### Create Secrets
-
-```bash path=null start=null
-kubectl create secret generic flybrowser-secrets \
-    --from-literal=openai-api-key=your-key
-```
-
-### Deploy
-
-```bash path=null start=null
-kubectl apply -f flybrowser-deployment.yaml
-```
-
-## Session Management
-
-### Session Lifecycle
-
-1. **Creation**: Client requests a new session with configuration
-2. **Active**: Session accepts commands (navigate, extract, action)
-3. **Idle**: Session remains open but inactive
-4. **Closed**: Session is explicitly closed or times out
-
-### Session Timeouts
-
-Sessions have configurable idle timeouts:
-
-```bash path=null start=null
-flybrowser-serve --session-timeout 3600  # 1 hour timeout
-```
-
-### Managing Sessions
-
-List all sessions:
-
-```python path=null start=null
-sessions = await client.list_sessions()
-for session in sessions["sessions"]:
-    print(f"Session {session['session_id']}: {session['status']}")
-```
-
-Close inactive sessions:
-
-```bash path=null start=null
-# Using the admin CLI
-flybrowser-admin sessions list
-flybrowser-admin sessions kill sess_abc123
-```
-
-## Security
-
-### API Authentication
-
-Enable API key authentication:
-
-```bash path=null start=null
-export FLYBROWSER_API_KEY="your-secure-api-key"
-flybrowser-serve --host 0.0.0.0 --port 8080
-```
-
-Clients must include the API key:
-
-```python path=null start=null
-client = FlyBrowserClient(
-    endpoint="http://localhost:8080",
-    api_key="your-secure-api-key"
-)
-```
-
-Or via header:
-
-```bash path=null start=null
-curl -X POST http://localhost:8080/sessions \
-    -H "Authorization: Bearer your-secure-api-key" \
-    -H "Content-Type: application/json" \
--d '{"llm_provider": "openai", "llm_model": "gpt-5.2"}'
-```
-
-### TLS/HTTPS
-
-For production deployments, use a reverse proxy (nginx, traefik) to terminate TLS:
-
-```nginx path=null start=null
 server {
-    listen 443 ssl;
+    listen 443 ssl http2;
     server_name flybrowser.example.com;
-    
+
     ssl_certificate /etc/ssl/certs/flybrowser.crt;
     ssl_certificate_key /etc/ssl/private/flybrowser.key;
-    
+
     location / {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://flybrowser;
         proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;
     }
 }
-```
-
-## Monitoring
-
-### Health Endpoint
-
-```bash path=null start=null
-curl http://localhost:8000/health
-```
-
-Response:
-
-```json path=null start=null
-{
-    "status": "healthy",
-    "version": "1.0.0"
-}
-```
-
-### Metrics
-
-Monitor key metrics:
-- Active session count
-- Request latency
-- Error rates
-- Resource utilization
-
-### Logging
-
-Configure logging level:
-
-```bash path=null start=null
-export FLYBROWSER_LOG_LEVEL=INFO
-flybrowser-serve
-```
-
-Log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`
-
-## Error Handling
-
-### Client-Side Error Handling
-
-```python path=null start=null
-from flybrowser import FlyBrowserClient
-
-client = FlyBrowserClient(endpoint="http://localhost:8080")
-
-try:
-    session = await client.create_session(
-        llm_provider="openai",
-    llm_model="gpt-5.2"
-    )
-    session_id = session["session_id"]
-    
-    await client.navigate(session_id, "https://example.com")
-    result = await client.extract(session_id, "Get data")
-    
-except ConnectionError:
-    print("Failed to connect to FlyBrowser server")
-except TimeoutError:
-    print("Request timed out")
-except Exception as e:
-    print(f"Error: {e}")
-finally:
-    if session_id:
-        await client.close_session(session_id)
-```
-
-### HTTP Error Codes
-
-| Code | Description |
-|------|-------------|
-| `200` | Success |
-| `201` | Session created |
-| `400` | Bad request (invalid parameters) |
-| `401` | Unauthorized (invalid API key) |
-| `404` | Session not found |
-| `429` | Too many requests |
-| `500` | Internal server error |
-
-## Performance Tuning
-
-### Connection Pooling
-
-Configure client connection pooling:
-
-```python path=null start=null
-import aiohttp
-from flybrowser import FlyBrowserClient
-
-# Use custom connector with connection pooling
-connector = aiohttp.TCPConnector(
-    limit=100,  # Total connections
-    limit_per_host=20  # Per-host limit
-)
-
-client = FlyBrowserClient(
-    endpoint="http://localhost:8080",
-    connector=connector
-)
 ```
 
 ### Resource Limits
 
 Set appropriate resource limits:
 
-```bash path=null start=null
-flybrowser-serve \
-    --max-sessions 20 \
-    --memory-limit 4096  # MB
+```bash
+# Memory limit (via systemd)
+MemoryMax=4G
+
+# CPU limit
+CPUQuota=200%  # 2 cores
+
+# File descriptors (browsers need many)
+LimitNOFILE=65535
 ```
 
-## Next Steps
+### Security
 
-- [Cluster Mode](cluster.md) - Deploy a distributed cluster for high availability
-- [REST API Reference](../reference/api.md) - Complete API documentation
-- [CLI Reference](../reference/cli.md) - Command-line interface documentation
+1. **Authentication** - Enable API key authentication:
+```bash
+export FLYBROWSER_AUTH_ENABLED=true
+export FLYBROWSER_API_KEYS='["key1","key2"]'
+```
+
+2. **Network** - Run behind firewall, only expose through reverse proxy
+
+3. **TLS** - Always use HTTPS in production
+
+4. **Rate Limiting** - Configure request limits:
+```bash
+export FLYBROWSER_RATE_LIMIT_RPM=60
+```
+
+## Scaling
+
+Standalone mode scales vertically:
+
+- **CPU**: More workers = more concurrent operations
+- **Memory**: More pool size = more concurrent browsers
+- **Disk**: More storage = longer recording retention
+
+For horizontal scaling across multiple servers, see [Cluster Deployment](cluster.md).
+
+## Troubleshooting
+
+### Common Issues
+
+**Port already in use:**
+```bash
+# Find process using port
+lsof -i :8000
+
+# Kill process
+kill -9 <PID>
+```
+
+**Browser startup failures:**
+```bash
+# Check Playwright dependencies
+playwright install-deps chromium
+
+# Verify browsers installed
+playwright install chromium
+```
+
+**Memory issues:**
+```bash
+# Reduce pool size
+export FLYBROWSER_POOL__MAX_SIZE=5
+
+# Reduce session timeout
+export FLYBROWSER_SESSION_TIMEOUT=1800
+```
+
+### Logs
+
+```bash
+# View logs
+journalctl -u flybrowser -f
+
+# Debug logging
+export FLYBROWSER_LOG_LEVEL=DEBUG
+flybrowser-serve
+```
+
+## See Also
+
+- [Embedded Deployment](embedded.md) - In-process deployment
+- [Cluster Deployment](cluster.md) - High-availability deployment
+- [REST API Reference](../reference/rest-api.md) - API documentation
+- [CLI Reference](../reference/cli.md) - Command line options

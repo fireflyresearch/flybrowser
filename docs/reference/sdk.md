@@ -1,31 +1,31 @@
 # SDK Reference
 
-This document provides complete reference documentation for the FlyBrowser Python SDK.
+Complete API reference for the FlyBrowser SDK.
 
 ## FlyBrowser Class
 
-The `FlyBrowser` class is the main entry point for embedded browser automation.
-
-### Import
-
-```python path=null start=null
-from flybrowser import FlyBrowser
-```
+The main entry point for browser automation.
 
 ### Constructor
 
-```python path=null start=null
+```python
 FlyBrowser(
-    endpoint: str = None,
+    endpoint: str | None = None,
     llm_provider: str = "openai",
-    llm_model: str = None,  # Uses provider default if not specified
-    api_key: str = None,
-    base_url: str = None,
+    llm_model: str | None = None,
+    api_key: str | None = None,
+    vision_enabled: bool | None = None,
+    model_config: dict | None = None,
     headless: bool = True,
     browser_type: str = "chromium",
     recording_enabled: bool = False,
     pii_masking_enabled: bool = True,
-    timeout: float = 30.0
+    timeout: float = 30.0,
+    pretty_logs: bool = True,
+    speed_preset: str = "balanced",
+    log_verbosity: str = "normal",
+    agent_config: AgentConfig | None = None,
+    config_file: str | None = None,
 )
 ```
 
@@ -33,657 +33,544 @@ FlyBrowser(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `endpoint` | `str` | `None` | Remote server endpoint (for client mode) |
-| `llm_provider` | `str` | `"openai"` | LLM provider (see supported providers below) |
-| `llm_model` | `str` | (provider default) | Model name for the LLM provider |
-| `api_key` | `str` | `None` | API key (or use environment variable) |
-| `base_url` | `str` | `None` | Custom endpoint URL (for local providers) |
+| `endpoint` | `str \| None` | `None` | Server URL. `None` for embedded mode |
+| `llm_provider` | `str` | `"openai"` | LLM provider: openai, anthropic, gemini, ollama |
+| `llm_model` | `str \| None` | `None` | Model name. Uses provider default if not specified |
+| `api_key` | `str \| None` | `None` | API key for LLM provider |
+| `vision_enabled` | `bool \| None` | `None` | Override vision capability detection |
+| `model_config` | `dict \| None` | `None` | Additional model configuration |
 | `headless` | `bool` | `True` | Run browser without visible window |
-| `browser_type` | `str` | `"chromium"` | Browser engine: `"chromium"`, `"firefox"`, or `"webkit"` |
+| `browser_type` | `str` | `"chromium"` | Browser: chromium, firefox, webkit |
 | `recording_enabled` | `bool` | `False` | Enable session recording |
-| `pii_masking_enabled` | `bool` | `True` | Enable automatic PII masking |
-| `timeout` | `float` | `30.0` | Default operation timeout in seconds |
-
-#### Supported LLM Providers
-
-| Provider | `llm_provider` value | Default Model | Environment Variable |
-|----------|---------------------|---------------|---------------------|
-| OpenAI | `"openai"` | `gpt-5.2` | `OPENAI_API_KEY` |
-| Anthropic | `"anthropic"` | `claude-sonnet-4-5-20250929` | `ANTHROPIC_API_KEY` |
-| Google Gemini | `"gemini"` or `"google"` | `gemini-2.0-flash` | `GOOGLE_API_KEY` |
-| Ollama | `"ollama"` | `qwen3:8b` | `OLLAMA_HOST` (optional) |
-| LM Studio | `"lm_studio"` | (user-defined) | - |
-| LocalAI | `"localai"` | (user-defined) | - |
-| vLLM | `"vllm"` | (user-defined) | - |
-
-#### Examples
-
-**OpenAI (default):**
-```python path=null start=null
-browser = FlyBrowser(
-    llm_provider="openai",
-    llm_model="gpt-5.2",  # Or: gpt-5-mini, gpt-5-nano, gpt-4.1, gpt-4o
-    headless=True
-)
-```
-
-**Anthropic:**
-```python path=null start=null
-browser = FlyBrowser(
-    llm_provider="anthropic",
-    llm_model="claude-sonnet-4-5-20250929"  # Or: claude-haiku-4-5-20251001, claude-opus-4-5-20251101
-)
-```
-
-**Google Gemini:**
-```python path=null start=null
-browser = FlyBrowser(
-    llm_provider="gemini",  # or "google"
-    llm_model="gemini-2.0-flash"  # Or: gemini-2.0-pro, gemini-1.5-pro, gemini-1.5-flash
-)
-```
-
-**Ollama (local):**
-```python path=null start=null
-browser = FlyBrowser(
-    llm_provider="ollama",
-    llm_model="qwen3:8b"  # Or: gemma3:12b, llama3.2:3b, deepseek-r1:8b, phi4
-)
-```
-
-**vLLM (high-throughput):**
-```python path=null start=null
-browser = FlyBrowser(
-    llm_provider="vllm",
-    llm_model="meta-llama/Llama-2-7b-chat-hf",
-    base_url="http://localhost:8000"
-)
-```
-
-### Methods
-
-#### start()
-
-Initializes Playwright and launches the browser.
-
-```python path=null start=null
-async def start() -> None
-```
-
-**Returns**: None
-
-**Raises**: 
-- `RuntimeError`: If browser fails to start
-
-**Example**:
-```python path=null start=null
-await browser.start()
-```
-
-#### stop()
-
-Closes the browser and releases all resources.
-
-```python path=null start=null
-async def stop() -> None
-```
-
-**Returns**: None
-
-**Example**:
-```python path=null start=null
-await browser.stop()
-```
-
-#### goto(url)
-
-Navigates to a specific URL.
-
-```python path=null start=null
-async def goto(url: str) -> None
-```
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `url` | `str` | The URL to navigate to |
-
-**Returns**: None
-
-**Raises**:
-- `TimeoutError`: If navigation times out
-- `ConnectionError`: If the URL cannot be reached
-
-**Example**:
-```python path=null start=null
-await browser.goto("https://example.com")
-```
-
-#### navigate(instruction)
-
-Navigates using natural language instructions.
-
-```python path=null start=null
-async def navigate(instruction: str) -> dict
-```
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `instruction` | `str` | Natural language navigation instruction |
-
-**Returns**: `dict` - Navigation result containing status and any extracted information
-
-**Example**:
-```python path=null start=null
-result = await browser.navigate("Go to the login page")
-result = await browser.navigate("Click on Products in the menu")
-```
-
-#### extract(query)
-
-Extracts data from the current page using natural language.
-
-```python path=null start=null
-async def extract(query: str) -> str
-```
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `query` | `str` | Natural language extraction query |
-
-**Returns**: `str` - Extracted data based on the query
-
-**Example**:
-```python path=null start=null
-title = await browser.extract("What is the page title?")
-prices = await browser.extract("List all product prices")
-```
-
-#### act(command)
-
-Performs an action on the page using natural language.
-
-```python path=null start=null
-async def act(command: str) -> dict
-```
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `command` | `str` | Natural language action command |
-
-**Returns**: `dict` - Action result containing status and details
-
-**Example**:
-```python path=null start=null
-await browser.act("Click the Submit button")
-await browser.act("Type 'hello' in the search field")
-await browser.act("Select 'Option 1' from the dropdown")
-```
-
-#### screenshot()
-
-Captures a screenshot of the current page.
-
-```python path=null start=null
-async def screenshot() -> bytes
-```
-
-**Returns**: `bytes` - PNG image data
-
-**Example**:
-```python path=null start=null
-image_data = await browser.screenshot()
-with open("screenshot.png", "wb") as f:
-    f.write(image_data)
-```
-
-#### run_workflow(workflow)
-
-Executes a predefined workflow.
-
-```python path=null start=null
-async def run_workflow(workflow: dict) -> dict
-```
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `workflow` | `dict` | Workflow definition |
-
-**Workflow Structure**:
-```python path=null start=null
-{
-    "name": "workflow_name",
-    "steps": [
-        {"action": "goto", "url": "https://example.com"},
-        {"action": "act", "command": "Click login"},
-        {"action": "extract", "query": "Get the user name"}
-    ]
-}
-```
-
-**Step Actions**:
-- `goto`: Navigate to URL (requires `url` field)
-- `act`: Perform action (requires `command` field)
-- `extract`: Extract data (requires `query` field)
-- `screenshot`: Capture screenshot
-
-**Returns**: `dict` - Workflow execution results
-
-**Example**:
-```python path=null start=null
-workflow = {
-    "name": "login_check",
-    "steps": [
-        {"action": "goto", "url": "https://example.com/login"},
-        {"action": "act", "command": "Enter credentials"},
-        {"action": "extract", "query": "Is login successful?"}
-    ]
-}
-result = await browser.run_workflow(workflow)
-```
-
-#### monitor()
-
-Returns the current browser status.
-
-```python path=null start=null
-async def monitor() -> dict
-```
-
-**Returns**: `dict` - Current browser state
-
-**Response Structure**:
-```python path=null start=null
-{
-    "url": "https://example.com/page",
-    "title": "Page Title",
-    "state": "ready"
-}
-```
-
-**Example**:
-```python path=null start=null
-status = await browser.monitor()
-print(f"Current URL: {status['url']}")
-```
-
-#### store_credential(name, value)
-
-Stores a credential securely.
-
-```python path=null start=null
-async def store_credential(name: str, value: str) -> None
-```
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `name` | `str` | Credential identifier |
-| `value` | `str` | Credential value |
-
-**Example**:
-```python path=null start=null
-await browser.store_credential("email", "user@example.com")
-await browser.store_credential("password", "secret123")
-```
-
-#### secure_fill(field, credential_name)
-
-Fills a form field using a stored credential.
-
-```python path=null start=null
-async def secure_fill(field: str, credential_name: str) -> None
-```
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `field` | `str` | Field identifier or description |
-| `credential_name` | `str` | Name of the stored credential |
-
-**Example**:
-```python path=null start=null
-await browser.secure_fill("email", "email")
-await browser.secure_fill("password", "password")
-```
-
-#### mask_pii(text)
-
-Masks personally identifiable information in text.
-
-```python path=null start=null
-async def mask_pii(text: str) -> str
-```
-
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `text` | `str` | Text containing potential PII |
-
-**Returns**: `str` - Text with PII masked
-
-**Example**:
-```python path=null start=null
-masked = await browser.mask_pii("Contact: john@example.com, 555-1234")
-# Result: "Contact: [EMAIL], [PHONE]"
-```
-
-### Context Manager
-
-`FlyBrowser` supports async context manager protocol:
-
-```python path=null start=null
-async with FlyBrowser(llm_provider="openai", llm_model="gpt-5.2") as browser:
-    await browser.goto("https://example.com")
-    data = await browser.extract("Get the content")
-```
-
-## FlyBrowserClient Class
-
-The `FlyBrowserClient` class provides a client interface to a remote FlyBrowser server.
-
-### Import
-
-```python path=null start=null
-from flybrowser import FlyBrowserClient
-```
-
-### Constructor
-
-```python path=null start=null
-FlyBrowserClient(
-    endpoint: str,
-    api_key: str = None,
-    timeout: float = 30.0
-)
-```
-
-#### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `endpoint` | `str` | (required) | Server URL (e.g., `"http://localhost:8000"`) |
-| `api_key` | `str` | `None` | API key for authentication |
+| `pii_masking_enabled` | `bool` | `True` | Enable PII masking |
 | `timeout` | `float` | `30.0` | Request timeout in seconds |
+| `pretty_logs` | `bool` | `True` | Human-readable logs |
+| `speed_preset` | `str` | `"balanced"` | fast, balanced, thorough |
+| `log_verbosity` | `str` | `"normal"` | silent, minimal, normal, verbose, debug |
+| `agent_config` | `AgentConfig \| None` | `None` | Custom agent configuration |
+| `config_file` | `str \| None` | `None` | Path to YAML/JSON config file |
 
 #### Example
 
-```python path=null start=null
-client = FlyBrowserClient(
+```python
+# Embedded mode with OpenAI
+browser = FlyBrowser(
+    llm_provider="openai",
+    api_key="sk-...",
+    headless=False,
+)
+
+# Server mode
+browser = FlyBrowser(
     endpoint="http://localhost:8000",
-    api_key="your-api-key"
+)
+
+# With custom configuration
+from flybrowser.agents.config import AgentConfig
+config = AgentConfig(max_iterations=100)
+browser = FlyBrowser(
+    llm_provider="anthropic",
+    api_key="sk-ant-...",
+    agent_config=config,
 )
 ```
 
-### Methods
+---
 
-#### create_session(**kwargs)
+## Lifecycle Methods
 
-Creates a new browser session on the server.
+### start()
 
-```python path=null start=null
-async def create_session(
-    llm_provider: str = "openai",
-    llm_model: str = None,
-    api_key: str = None,
-    base_url: str = None,
-    headless: bool = True,
-    browser_type: str = "chromium"
+```python
+async def start() -> None
+```
+
+Start the browser session. Called automatically when using context manager.
+
+### stop()
+
+```python
+async def stop() -> None
+```
+
+Stop the browser session and clean up resources.
+
+### Context Manager
+
+```python
+async with FlyBrowser(...) as browser:
+    # Browser is started and ready
+    await browser.goto("https://example.com")
+# Browser is automatically stopped
+```
+
+---
+
+## Navigation Methods
+
+### goto()
+
+```python
+async def goto(
+    url: str,
+    wait_until: str = "domcontentloaded"
+) -> None
+```
+
+Navigate directly to a URL.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | `str` | Required | URL to navigate to |
+| `wait_until` | `str` | `"domcontentloaded"` | load, domcontentloaded, networkidle |
+
+```python
+await browser.goto("https://example.com")
+await browser.goto("https://example.com", wait_until="networkidle")
+```
+
+### navigate()
+
+```python
+async def navigate(
+    instruction: str,
+    use_vision: bool = True
 ) -> dict
 ```
 
-**Parameters**:
+Navigate using natural language.
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm_provider` | `str` | `"openai"` | LLM provider (openai, anthropic, gemini, ollama, etc.) |
-| `llm_model` | `str` | (provider default) | Model name |
-| `api_key` | `str` | `None` | LLM API key |
-| `base_url` | `str` | `None` | Custom endpoint for local providers |
-| `headless` | `bool` | `True` | Headless mode |
-| `browser_type` | `str` | `"chromium"` | Browser engine |
+| `instruction` | `str` | Required | Natural language navigation instruction |
+| `use_vision` | `bool` | `True` | Use visual context |
 
-**Returns**: `dict` - Session information including `session_id`
+```python
+result = await browser.navigate("go to the login page")
+result = await browser.navigate("click on Products in the menu")
+```
 
-**Example**:
-```python path=null start=null
-# With OpenAI
-session = await client.create_session(
-    llm_provider="openai",
-    llm_model="gpt-5.2"
+---
+
+## Core Methods
+
+### act()
+
+```python
+async def act(
+    instruction: str,
+    use_vision: bool = True,
+    return_metadata: bool = True
+) -> AgentRequestResponse | dict
+```
+
+Execute a browser action using natural language.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `instruction` | `str` | Required | Action to perform |
+| `use_vision` | `bool` | `True` | Use visual context |
+| `return_metadata` | `bool` | `True` | Return full response object |
+
+```python
+# Click
+result = await browser.act("click the Submit button")
+
+# Type
+result = await browser.act("type 'hello' in the search box")
+
+# Multiple actions
+result = await browser.act("scroll down and click Learn More")
+```
+
+### extract()
+
+```python
+async def extract(
+    query: str,
+    use_vision: bool = False,
+    schema: dict | None = None,
+    return_metadata: bool = True
+) -> AgentRequestResponse | dict
+```
+
+Extract data from the page.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | `str` | Required | What to extract |
+| `use_vision` | `bool` | `False` | Use visual context |
+| `schema` | `dict \| None` | `None` | JSON Schema for structured data |
+| `return_metadata` | `bool` | `True` | Return full response object |
+
+```python
+# Simple extraction
+result = await browser.extract("get the page title")
+
+# With schema
+result = await browser.extract(
+    "get product details",
+    schema={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "price": {"type": "number"}
+        }
+    }
+)
+```
+
+### observe()
+
+```python
+async def observe(
+    query: str,
+    return_selectors: bool = True,
+    return_metadata: bool = True
+) -> AgentRequestResponse | list
+```
+
+Find elements on the page.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | `str` | Required | Description of elements to find |
+| `return_selectors` | `bool` | `True` | Include CSS selectors |
+| `return_metadata` | `bool` | `True` | Return full response object |
+
+```python
+result = await browser.observe("find all buttons")
+result = await browser.observe("find the login form", return_selectors=True)
+```
+
+### agent()
+
+```python
+async def agent(
+    task: str,
+    context: dict | None = None,
+    max_iterations: int = 50,
+    max_time_seconds: float = 1800.0,
+    return_metadata: bool = True
+) -> AgentRequestResponse | dict
+```
+
+Execute autonomous multi-step tasks.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `task` | `str` | Required | Task description |
+| `context` | `dict \| None` | `None` | Additional context |
+| `max_iterations` | `int` | `50` | Max ReAct cycles |
+| `max_time_seconds` | `float` | `1800.0` | Time limit |
+| `return_metadata` | `bool` | `True` | Return full response |
+
+```python
+result = await browser.agent(
+    "Find the cheapest flight to Tokyo and extract the price"
 )
 
-# With Gemini
-session = await client.create_session(
-    llm_provider="gemini",
-    llm_model="gemini-2.0-flash"
+result = await browser.agent(
+    "Complete the registration form",
+    context={"email": "user@example.com", "name": "John"},
+    max_iterations=30
 )
+```
 
-# With local Ollama
-session = await client.create_session(
-    llm_provider="ollama",
-    llm_model="qwen3:8b"
+### execute_task()
+
+```python
+async def execute_task(task: str) -> dict
+```
+
+Execute a complex task with ReAct reasoning.
+
+```python
+result = await browser.execute_task(
+    "Go to google.com and search for 'python tutorials'"
 )
-
-session_id = session["session_id"]
 ```
 
-#### close_session(session_id)
+---
 
-Closes a browser session.
+## Screenshot & Recording
 
-```python path=null start=null
-async def close_session(session_id: str) -> dict
+### screenshot()
+
+```python
+async def screenshot(
+    full_page: bool = False,
+    mask_pii: bool = True
+) -> dict
 ```
 
-**Parameters**:
+Capture a screenshot.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `full_page` | `bool` | `False` | Capture full scrollable page |
+| `mask_pii` | `bool` | `True` | Apply PII masking |
+
+**Returns:** Dictionary with `data_base64`, `width`, `height`, `format`
+
+```python
+screenshot = await browser.screenshot(full_page=True)
+image_data = base64.b64decode(screenshot["data_base64"])
+```
+
+### start_recording() / stop_recording()
+
+```python
+async def start_recording() -> dict
+async def stop_recording() -> dict
+```
+
+Record the browser session.
+
+```python
+await browser.start_recording()
+# ... perform actions ...
+recording = await browser.stop_recording()
+```
+
+---
+
+## Streaming
+
+### start_stream()
+
+```python
+async def start_stream(
+    protocol: str = "hls",
+    quality: str = "high",
+    codec: str = "h264",
+    width: int | None = None,
+    height: int | None = None,
+    frame_rate: int | None = None,
+    rtmp_url: str | None = None,
+    rtmp_key: str | None = None
+) -> dict
+```
+
+Start live streaming the browser.
+
+### stop_stream()
+
+```python
+async def stop_stream() -> dict
+```
+
+Stop the stream.
+
+### get_stream_status()
+
+```python
+async def get_stream_status() -> dict
+```
+
+Get current stream status.
+
+---
+
+## Security
+
+### store_credential()
+
+```python
+async def store_credential(
+    name: str,
+    value: str,
+    pii_type: str = "sensitive"
+) -> None
+```
+
+Store a credential securely (never logged).
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `session_id` | `str` | Session identifier |
+| `name` | `str` | Credential identifier |
+| `value` | `str` | The credential value |
+| `pii_type` | `str` | Type: password, credit_card, ssn, sensitive |
 
-**Returns**: `dict` - Close confirmation
-
-**Example**:
-```python path=null start=null
-await client.close_session("sess_abc123")
+```python
+await browser.store_credential("my_password", "secret123", pii_type="password")
 ```
 
-#### navigate(session_id, url)
+### secure_fill()
 
-Navigates to a URL.
-
-```python path=null start=null
-async def navigate(session_id: str, url: str) -> dict
+```python
+async def secure_fill(
+    selector: str,
+    credential_id: str
+) -> dict
 ```
 
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `session_id` | `str` | Session identifier |
-| `url` | `str` | URL to navigate to |
+Fill a field using a stored credential.
 
-**Returns**: `dict` - Navigation result
-
-**Example**:
-```python path=null start=null
-await client.navigate("sess_abc123", "https://example.com")
+```python
+await browser.secure_fill("#password", "my_password")
 ```
 
-#### extract(session_id, query)
+### mask_pii()
 
-Extracts data from the page.
-
-```python path=null start=null
-async def extract(session_id: str, query: str) -> str
+```python
+async def mask_pii(text: str) -> str
 ```
 
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `session_id` | `str` | Session identifier |
-| `query` | `str` | Extraction query |
+Mask PII in text.
 
-**Returns**: `str` - Extracted data
-
-**Example**:
-```python path=null start=null
-result = await client.extract("sess_abc123", "Get the page title")
+```python
+masked = await browser.mask_pii("Call me at 555-1234")
+# "Call me at [PHONE]"
 ```
 
-#### action(session_id, command)
+---
 
-Performs an action on the page.
+## Usage Tracking
 
-```python path=null start=null
-async def action(session_id: str, command: str) -> dict
+### get_usage_summary()
+
+```python
+async def get_usage_summary() -> dict
 ```
 
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `session_id` | `str` | Session identifier |
-| `command` | `str` | Action command |
+Get LLM usage statistics for the session.
 
-**Returns**: `dict` - Action result
-
-**Example**:
-```python path=null start=null
-await client.action("sess_abc123", "Click the Submit button")
+```python
+usage = await browser.get_usage_summary()
+print(f"Total tokens: {usage['total_tokens']}")
+print(f"Total cost: ${usage['total_cost_usd']:.4f}")
 ```
 
-#### screenshot(session_id)
+---
 
-Captures a screenshot.
+## Response Objects
 
-```python path=null start=null
-async def screenshot(session_id: str) -> bytes
+### AgentRequestResponse
+
+All core methods return `AgentRequestResponse` when `return_metadata=True`.
+
+```python
+class AgentRequestResponse:
+    success: bool        # Operation succeeded
+    data: Any           # Result data
+    error: str | None   # Error message
+    operation: str      # Method name
+    query: str | None   # Original query
+    
+    # When metadata is included:
+    execution: ExecutionInfo | None
+    llm_usage: LLMUsageInfo | None
+    metadata: dict | None
+    
+    def pprint() -> None  # Pretty print all details
+    def to_dict() -> dict # Convert to dictionary
 ```
 
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `session_id` | `str` | Session identifier |
+### ExecutionInfo
 
-**Returns**: `bytes` - PNG image data
-
-**Example**:
-```python path=null start=null
-image = await client.screenshot("sess_abc123")
+```python
+class ExecutionInfo:
+    iterations: int              # ReAct cycles used
+    max_iterations: int          # Configured limit
+    duration_seconds: float      # Total time
+    pages_scraped: int          # Pages visited
+    actions_taken: list[str]    # Tools invoked
+    success: bool               # Final outcome
+    summary: str                # Human-readable summary
+    history: list[dict]         # Step-by-step details
 ```
 
-#### run_workflow(session_id, workflow)
+### LLMUsageInfo
 
-Executes a workflow.
-
-```python path=null start=null
-async def run_workflow(session_id: str, workflow: dict) -> dict
+```python
+class LLMUsageInfo:
+    prompt_tokens: int          # Input tokens
+    completion_tokens: int      # Output tokens
+    total_tokens: int           # Combined
+    cost_usd: float            # Estimated cost
+    model: str                 # Model used
+    calls_count: int           # Number of LLM calls
+    cached_calls: int          # Cache hits
 ```
 
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `session_id` | `str` | Session identifier |
-| `workflow` | `dict` | Workflow definition |
+---
 
-**Returns**: `dict` - Workflow results
+## Batch Operations
 
-**Example**:
-```python path=null start=null
-result = await client.run_workflow("sess_abc123", {
-    "name": "example",
-    "steps": [...]
-})
+### batch_execute()
+
+```python
+async def batch_execute(
+    tasks: list[str],
+    parallel: bool = False,
+    stop_on_failure: bool = False
+) -> list[dict]
 ```
 
-#### monitor(session_id)
+Execute multiple tasks.
 
-Gets session status.
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tasks` | `list[str]` | Required | Tasks to execute |
+| `parallel` | `bool` | `False` | Run in parallel |
+| `stop_on_failure` | `bool` | `False` | Stop on first failure |
 
-```python path=null start=null
-async def monitor(session_id: str) -> dict
+```python
+results = await browser.batch_execute([
+    "Extract title from page A",
+    "Extract title from page B",
+], parallel=True)
 ```
 
-**Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `session_id` | `str` | Session identifier |
+---
 
-**Returns**: `dict` - Session status
+## Properties
 
-**Example**:
-```python path=null start=null
-status = await client.monitor("sess_abc123")
+### Mode Information
+
+```python
+browser._mode        # "embedded" or "server"
+browser._started     # Whether browser is started
+browser._session_id  # Session ID (server mode)
 ```
+
+---
+
+## Supported LLM Providers
+
+| Provider | Models | Vision |
+|----------|--------|--------|
+| OpenAI | gpt-4o, gpt-4o-mini, gpt-4-turbo | Yes |
+| Anthropic | claude-3-5-sonnet, claude-3-opus, claude-3-haiku | Yes |
+| Google | gemini-1.5-pro, gemini-1.5-flash | Yes |
+| Ollama | llama3, mistral, qwen, etc. | Varies |
+
+---
 
 ## Error Handling
 
-### Exception Types
+All methods may raise:
 
-| Exception | Description |
-|-----------|-------------|
-| `TimeoutError` | Operation exceeded timeout |
-| `ConnectionError` | Failed to connect to URL or server |
-| `ValueError` | Invalid parameter value |
-| `RuntimeError` | Browser or session error |
+- `ValueError` - Invalid parameters or task
+- `RuntimeError` - Browser not started or connection failed
+- `asyncio.TimeoutError` - Operation timed out
 
-### Example
-
-```python path=null start=null
-from flybrowser import FlyBrowser
-
-browser = FlyBrowser(llm_provider="openai", llm_model="gpt-5.2")
-
+```python
 try:
-    await browser.start()
-    await browser.goto("https://example.com")
-    result = await browser.extract("Get data")
-except TimeoutError:
+    result = await browser.extract("get price")
+    if not result.success:
+        print(f"Extraction failed: {result.error}")
+except ValueError as e:
+    print(f"Invalid query: {e}")
+except asyncio.TimeoutError:
     print("Operation timed out")
-except ConnectionError:
-    print("Connection failed")
-except Exception as e:
-    print(f"Error: {e}")
-finally:
-    await browser.stop()
 ```
 
-## Type Definitions
+---
 
-### WorkflowStep
+## See Also
 
-```python path=null start=null
-class WorkflowStep(TypedDict):
-    action: str  # "goto", "act", "extract", "screenshot"
-    url: Optional[str]  # Required for "goto"
-    command: Optional[str]  # Required for "act"
-    query: Optional[str]  # Required for "extract"
-```
-
-### Workflow
-
-```python path=null start=null
-class Workflow(TypedDict):
-    name: str
-    steps: List[WorkflowStep]
-```
-
-### SessionInfo
-
-```python path=null start=null
-class SessionInfo(TypedDict):
-    session_id: str
-    status: str
-    created_at: str
-```
-
-### MonitorStatus
-
-```python path=null start=null
-class MonitorStatus(TypedDict):
-    url: str
-    title: str
-    state: str
-```
+- [Quickstart Guide](../getting-started/quickstart.md) - Get started quickly
+- [Core Concepts](../getting-started/concepts.md) - Understand the framework
+- [Configuration Reference](configuration.md) - Complete configuration options
