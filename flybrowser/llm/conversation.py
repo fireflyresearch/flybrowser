@@ -357,17 +357,24 @@ class ConversationManager:
         self._total_requests += 1
         
         try:
+            # Format messages as prompt for generate_structured
+            formatted_prompt = self._format_messages_as_prompt(messages)
+            
             response = await self.llm.generate_structured(
-                prompt=self._format_messages_as_prompt(messages),
+                prompt=formatted_prompt,
                 schema=schema,
                 system_prompt=system_prompt,
                 temperature=temperature,
                 **kwargs,
             )
             
-            # Track usage
-            if hasattr(response, 'usage') and response.usage:
-                self._total_tokens_used += response.usage.get('total_tokens', 0)
+            # Estimate token usage since generate_structured returns Dict, not LLMResponse
+            # This is an approximation based on input/output sizes
+            input_tokens = TokenEstimator.estimate(formatted_prompt).tokens
+            if system_prompt:
+                input_tokens += TokenEstimator.estimate(system_prompt).tokens
+            output_tokens = TokenEstimator.estimate(json.dumps(response)).tokens
+            self._total_tokens_used += input_tokens + output_tokens
             
             # Add to history
             if add_to_history:
