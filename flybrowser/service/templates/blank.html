@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlyBrowser - Waiting for Agent</title>
+    <!-- Marker for blank page detection -->
+    <meta name="flybrowser-blank" content="true">
+    {% if inline_styles %}
+    <style>{{ css_content | safe }}</style>
+    {% else %}
+    <link rel="stylesheet" href="{{ static_url }}/css/blank.css">
+    {% endif %}
+</head>
+<body>
+    <!-- Hidden marker element for page type detection -->
+    <div class="flybrowser-blank-page" data-flybrowser-blank="true" style="display:none;">
+        FlyBrowser Blank Page - Waiting for Agent Actions
+    </div>
+    
+    <!-- Matrix rain canvas -->
+    <canvas id="matrix-rain"></canvas>
+    
+    <!-- Ambient glow background -->
+    <div class="bg-gradient"></div>
+    
+    <!-- Main content -->
+    <div class="container">
+        <!-- Status section -->
+        <div class="status-section">
+            <div class="spinner-container">
+                <div class="spinner-outer"></div>
+                <div class="spinner-inner"></div>
+                <div class="spinner-center"></div>
+            </div>
+            
+            <div class="status-text">
+                <div class="status-title">
+                    Waiting for Agent<span class="waiting-dots"></span>
+                </div>
+                <div class="status-subtitle">
+                    FlyBrowser is ready and awaiting instructions from the automation agent
+                </div>
+            </div>
+            
+            <div class="status-badge">
+                <div class="status-dot"></div>
+                <span>System Ready</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Footer -->
+    <footer class="footer">
+        <span>Firefly Software Solutions Inc</span>
+        <span>Made with ❤️</span>
+        <span>Apache 2.0 License</span>
+    </footer>
+    
+    {% if inline_scripts %}
+    <script>{{ js_content | safe }}</script>
+    {% else %}
+    <script src="{{ static_url }}/js/blank.js"></script>
+    {% endif %}
+</body>
+</html>

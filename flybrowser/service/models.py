@@ -131,6 +131,40 @@ class ExtractRequest(BaseModel):
     schema: Optional[Dict[str, Any]] = Field(None, description="JSON schema for structured output")
 
 
+class LLMUsageResponse(BaseModel):
+    """LLM usage statistics for a request."""
+    
+    prompt_tokens: int = Field(0, description="Number of input tokens")
+    completion_tokens: int = Field(0, description="Number of output tokens")
+    total_tokens: int = Field(0, description="Total tokens used")
+    cost_usd: float = Field(0.0, description="Estimated cost in USD")
+    model: str = Field("", description="Model used")
+    calls_count: int = Field(0, description="Number of LLM API calls")
+    cached_calls: int = Field(0, description="Number of cached responses")
+
+
+class PageMetricsResponse(BaseModel):
+    """Page metrics for a request."""
+    
+    url: str = Field("", description="Page URL")
+    title: str = Field("", description="Page title")
+    html_size_bytes: int = Field(0, description="HTML content size in bytes")
+    html_size_kb: float = Field(0.0, description="HTML content size in KB")
+    element_count: int = Field(0, description="Number of elements on page")
+    interactive_element_count: int = Field(0, description="Number of interactive elements")
+    obstacles_detected: int = Field(0, description="Number of obstacles detected")
+    obstacles_dismissed: int = Field(0, description="Number of obstacles dismissed")
+
+
+class TimingResponse(BaseModel):
+    """Timing breakdown for a request."""
+    
+    total_ms: float = Field(0.0, description="Total duration in milliseconds")
+    phases: Dict[str, float] = Field(default_factory=dict, description="Timing by phase")
+    started_at: Optional[str] = Field(None, description="Start timestamp")
+    ended_at: Optional[str] = Field(None, description="End timestamp")
+
+
 class ExtractResponse(BaseModel):
     """Response from data extraction."""
 
@@ -139,6 +173,9 @@ class ExtractResponse(BaseModel):
     confidence: Optional[float] = Field(None, description="Confidence score")
     cached: bool = Field(False, description="Whether result was cached")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    llm_usage: Optional[LLMUsageResponse] = Field(None, description="LLM usage statistics")
+    page_metrics: Optional[PageMetricsResponse] = Field(None, description="Page metrics")
+    timing: Optional[TimingResponse] = Field(None, description="Timing breakdown")
 
 
 class ActionRequest(BaseModel):
@@ -157,6 +194,9 @@ class ActionResponse(BaseModel):
     element_found: bool = Field(..., description="Whether target element was found")
     duration_ms: int = Field(..., description="Action duration in milliseconds")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    llm_usage: Optional[LLMUsageResponse] = Field(None, description="LLM usage statistics")
+    page_metrics: Optional[PageMetricsResponse] = Field(None, description="Page metrics")
+    timing: Optional[TimingResponse] = Field(None, description="Timing breakdown")
 
 
 class HealthResponse(BaseModel):
@@ -253,8 +293,14 @@ class StreamStartRequest(BaseModel):
     """Request to start a stream."""
 
     protocol: str = Field("hls", description="Streaming protocol (hls, dash, rtmp)")
-    quality: str = Field("medium", description="Quality profile")
-    codec: str = Field("h264", description="Video codec")
+    quality: str = Field(
+        "high",
+        description="Quality profile: low_bandwidth, medium, high, ultra_high, local_high, local_4k, studio"
+    )
+    codec: str = Field("h264", description="Video codec (h264, h265, vp9)")
+    width: Optional[int] = Field(None, description="Video width in pixels (e.g., 1920, 3840)")
+    height: Optional[int] = Field(None, description="Video height in pixels (e.g., 1080, 2160)")
+    frame_rate: Optional[int] = Field(None, description="Frames per second (default: 30)")
     rtmp_url: Optional[str] = Field(None, description="RTMP destination URL")
     rtmp_key: Optional[str] = Field(None, description="RTMP stream key")
     max_viewers: int = Field(100, description="Maximum concurrent viewers")
@@ -269,6 +315,7 @@ class StreamStartResponse(BaseModel):
     dash_url: Optional[str] = Field(None, description="DASH manifest URL")
     rtmp_url: Optional[str] = Field(None, description="RTMP URL")
     websocket_url: Optional[str] = Field(None, description="WebSocket URL for updates")
+    player_url: Optional[str] = Field(None, description="Embedded web player URL")
 
 
 class StreamStatusResponse(BaseModel):
@@ -429,5 +476,94 @@ class NavigateNLResponse(BaseModel):
     url: Optional[str] = Field(None, description="Final URL after navigation")
     title: Optional[str] = Field(None, description="Page title")
     navigation_type: Optional[str] = Field(None, description="Type of navigation performed")
+    error: Optional[str] = Field(None, description="Error message if failed")
+
+
+# Agent mode models (primary interface - replaces auto())
+class AgentRequest(BaseModel):
+    """
+    Request for autonomous agent task execution.
+    
+    This is the primary interface for complex, multi-step browser automation.
+    The agent automatically selects the optimal reasoning strategy and adapts
+    during execution.
+    
+    Example:
+        >>> request = AgentRequest(
+        ...     task="Search for flights to Tokyo and extract the cheapest option",
+        ...     context={"budget": 1000, "departure": "2024-03-15"},
+        ...     max_iterations=50,
+        ...     max_time_seconds=600,
+        ... )
+    """
+    
+    task: str = Field(..., description="High-level task description in natural language")
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="User-provided context to inform decisions (e.g., preferences, constraints)"
+    )
+    max_iterations: int = Field(
+        50, ge=1, le=500,
+        description="Maximum number of action iterations before stopping"
+    )
+    max_time_seconds: float = Field(
+        1800.0, ge=30.0, le=7200.0,
+        description="Maximum execution time in seconds (30 minutes default)"
+    )
+
+
+class AgentResponse(BaseModel):
+    """
+    Response from agent task execution.
+    
+    Contains comprehensive results with execution metadata.
+    """
+    
+    success: bool = Field(..., description="Whether the task was completed successfully")
+    task: str = Field(..., description="The original task")
+    result_data: Optional[Any] = Field(
+        None,
+        description="Any data produced (extracted information, confirmation, etc.)"
+    )
+    iterations: int = Field(0, description="Total iterations executed")
+    duration_seconds: float = Field(0.0, description="Total execution time in seconds")
+    final_url: str = Field("", description="Final URL after execution")
+    error_message: Optional[str] = Field(None, description="Error message if failed")
+    execution_history: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Summary of actions taken during execution"
+    )
+    llm_usage: Optional[LLMUsageResponse] = Field(None, description="LLM usage statistics")
+
+
+# Observe mode models (element finding)
+class ObserveRequest(BaseModel):
+    """
+    Request to observe and identify elements on the page.
+    
+    Example:
+        >>> request = ObserveRequest(
+        ...     query="find the login button",
+        ...     return_selectors=True,
+        ... )
+    """
+    
+    query: str = Field(..., description="Natural language description of what to find")
+    return_selectors: bool = Field(True, description="Include CSS selectors in response")
+
+
+class ObserveResponse(BaseModel):
+    """
+    Response from observe operation.
+    
+    Contains found elements with selectors and descriptions.
+    """
+    
+    success: bool = Field(..., description="Whether observation succeeded")
+    elements: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of found elements with selectors and info"
+    )
+    page_url: Optional[str] = Field(None, description="Current page URL")
     error: Optional[str] = Field(None, description="Error message if failed")
 

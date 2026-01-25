@@ -43,7 +43,6 @@ Example Usage:
     Create a session:
     ```bash
     curl -X POST http://localhost:8000/sessions \\
-      -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
       -d '{
         "llm_provider": "openai",
@@ -56,7 +55,6 @@ Example Usage:
     Navigate:
     ```bash
     curl -X POST http://localhost:8000/sessions/{session_id}/navigate \\
-      -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
       -d '{"url": "https://example.com"}'
     ```
@@ -72,16 +70,20 @@ from typing import Dict, Optional
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from flybrowser import __version__
-from flybrowser.service.auth import APIKey, verify_api_key
+from flybrowser.service.template_renderer import render_player_html, render_blank_html, get_static_dir
 from flybrowser.service.models import (
     ActionRequest,
     ActionResponse,
+    AgentRequest,
+    AgentResponse,
     ErrorResponse,
     ExtractRequest,
     ExtractResponse,
     HealthResponse,
+    LLMUsageResponse,
     MaskPIIRequest,
     MaskPIIResponse,
     MetricsResponse,
@@ -91,6 +93,9 @@ from flybrowser.service.models import (
     NavigateNLResponse,
     NavigateRequest,
     NavigateResponse,
+    ObserveRequest,
+    ObserveResponse,
+    PageMetricsResponse,
     RecordingDownloadResponse,
     RecordingListResponse,
     RecordingStartRequest,
@@ -108,6 +113,7 @@ from flybrowser.service.models import (
     StreamStartResponse,
     StreamStatusResponse,
     StreamStopResponse,
+    TimingResponse,
     WorkflowRequest,
     WorkflowResponse,
 )
@@ -191,14 +197,6 @@ FlyBrowser provides a powerful API for browser automation with built-in support 
 - **PII Masking**: Automatically mask sensitive data in screenshots and recordings
 - **LLM Integration**: Use AI agents to automate complex tasks
 
-## Authentication
-
-API requests require authentication via API key:
-
-```
-X-API-Key: your-api-key
-```
-
 ## Quick Start
 
 1. Create a session: `POST /sessions`
@@ -250,6 +248,10 @@ app = FastAPI(
             "description": "Browser navigation and interaction - navigate, click, type, etc.",
         },
         {
+            "name": "Automation",
+            "description": "High-level automation endpoints - autonomous mode (`auto`) for complex goal execution and schema-validated web scraping (`scrape`) with pagination and validators",
+        },
+        {
             "name": "Screenshots",
             "description": "Screenshot capture with optional PII masking",
         },
@@ -272,6 +274,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files for player CSS/JS
+app.mount("/static", StaticFiles(directory=str(get_static_dir())), name="static")
 
 
 # Exception handlers
@@ -345,7 +350,7 @@ async def health_check():
     summary="Get service metrics",
     description="Get detailed service metrics including request counts, cache stats, and rate limits.",
 )
-async def get_metrics(api_key: APIKey = Depends(verify_api_key)):
+async def get_metrics():
     """
     Get service metrics.
 
@@ -379,7 +384,6 @@ async def get_metrics(api_key: APIKey = Depends(verify_api_key)):
 )
 async def create_session(
     request: SessionCreateRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """
     Create a new browser session.
@@ -429,7 +433,6 @@ async def create_session(
     description="Get a list of all active browser sessions.",
 )
 async def list_sessions(
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """
     List all active browser sessions.
@@ -467,7 +470,6 @@ async def list_sessions(
 )
 async def get_session(
     session_id: str,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """
     Get session information.
@@ -506,7 +508,6 @@ async def get_session(
 )
 async def delete_session(
     session_id: str,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """
     Delete a browser session.
@@ -541,7 +542,6 @@ async def delete_session(
 async def navigate(
     session_id: str,
     request: NavigateRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """
     Navigate to a URL.
@@ -594,23 +594,50 @@ async def navigate(
 async def extract_data(
     session_id: str,
     request: ExtractRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Extract data from the current page."""
     try:
         browser = session_manager.get_session(session_id)
 
-        result = await browser.extract(
+        # Use return_metadata=True to get full response with metrics
+        response = await browser.extract(
             query=request.query,
             use_vision=request.use_vision,
             schema=request.schema,
+            return_metadata=True,
         )
 
+        # Build response with metrics
         return ExtractResponse(
-            success=True,
-            data=result,
-            cached=result.get("_cached", False),
-            metadata={},
+            success=response.success,
+            data=response.data if response.success else {},
+            cached=response.metadata.get("cached", False),
+            metadata=response.metadata,
+            llm_usage=LLMUsageResponse(
+                prompt_tokens=response.llm_usage.prompt_tokens,
+                completion_tokens=response.llm_usage.completion_tokens,
+                total_tokens=response.llm_usage.total_tokens,
+                cost_usd=response.llm_usage.cost_usd,
+                model=response.llm_usage.model,
+                calls_count=response.llm_usage.calls_count,
+                cached_calls=response.llm_usage.cached_calls,
+            ),
+            page_metrics=PageMetricsResponse(
+                url=response.page_metrics.url,
+                title=response.page_metrics.title,
+                html_size_bytes=response.page_metrics.html_size_bytes,
+                html_size_kb=response.page_metrics.html_size_kb,
+                element_count=response.page_metrics.element_count,
+                interactive_element_count=response.page_metrics.interactive_element_count,
+                obstacles_detected=response.page_metrics.obstacles_detected,
+                obstacles_dismissed=response.page_metrics.obstacles_dismissed,
+            ),
+            timing=TimingResponse(
+                total_ms=response.timing.total_ms,
+                phases=response.timing.phases,
+                started_at=response.timing.started_at,
+                ended_at=response.timing.ended_at,
+            ),
         )
     except KeyError:
         raise HTTPException(
@@ -629,27 +656,49 @@ async def extract_data(
 async def perform_action(
     session_id: str,
     request: ActionRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Perform an action on the page."""
-    start = time.time()
-
     try:
         browser = session_manager.get_session(session_id)
 
-        await browser.act(
+        # Use return_metadata=True to get full response with metrics
+        response = await browser.act(
             instruction=request.instruction,
             use_vision=request.use_vision,
+            return_metadata=True,
         )
 
-        duration_ms = int((time.time() - start) * 1000)
-
         return ActionResponse(
-            success=True,
+            success=response.success,
             action_type="act",
-            element_found=True,
-            duration_ms=duration_ms,
-            metadata={},
+            element_found=response.success,
+            duration_ms=int(response.timing.total_ms),
+            metadata=response.metadata,
+            llm_usage=LLMUsageResponse(
+                prompt_tokens=response.llm_usage.prompt_tokens,
+                completion_tokens=response.llm_usage.completion_tokens,
+                total_tokens=response.llm_usage.total_tokens,
+                cost_usd=response.llm_usage.cost_usd,
+                model=response.llm_usage.model,
+                calls_count=response.llm_usage.calls_count,
+                cached_calls=response.llm_usage.cached_calls,
+            ),
+            page_metrics=PageMetricsResponse(
+                url=response.page_metrics.url,
+                title=response.page_metrics.title,
+                html_size_bytes=response.page_metrics.html_size_bytes,
+                html_size_kb=response.page_metrics.html_size_kb,
+                element_count=response.page_metrics.element_count,
+                interactive_element_count=response.page_metrics.interactive_element_count,
+                obstacles_detected=response.page_metrics.obstacles_detected,
+                obstacles_dismissed=response.page_metrics.obstacles_dismissed,
+            ),
+            timing=TimingResponse(
+                total_ms=response.timing.total_ms,
+                phases=response.timing.phases,
+                started_at=response.timing.started_at,
+                ended_at=response.timing.ended_at,
+            ),
         )
     except KeyError:
         raise HTTPException(
@@ -675,7 +724,6 @@ async def perform_action(
 async def navigate_natural_language(
     session_id: str,
     request: NavigateNLRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Navigate using natural language instructions."""
     try:
@@ -716,7 +764,6 @@ async def navigate_natural_language(
 async def execute_workflow(
     session_id: str,
     request: WorkflowRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Execute a multi-step workflow."""
     try:
@@ -758,7 +805,6 @@ async def execute_workflow(
 async def monitor_condition(
     session_id: str,
     request: MonitorRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Monitor for a condition to be met."""
     try:
@@ -789,6 +835,172 @@ async def monitor_condition(
         )
 
 
+# Agent endpoint (primary interface)
+@app.post(
+    "/sessions/{session_id}/agent",
+    response_model=AgentResponse,
+    tags=["Automation"],
+    summary="Execute agent task (recommended)",
+    description="Execute a complex task using the intelligent agent. "
+                "This is the recommended endpoint for multi-step browser automation.",
+)
+async def execute_agent(
+    session_id: str,
+    request: AgentRequest,
+):
+    """
+    Execute a task using the intelligent agent.
+    
+    This is the primary and recommended endpoint for complex browser automation.
+    The agent automatically selects the optimal reasoning strategy and adapts
+    dynamically during execution.
+    
+    **Features:**
+    - Automatic strategy selection based on task complexity
+    - Multi-tool orchestration (16+ browser tools)
+    - Automatic obstacle handling (cookie banners, modals, popups)
+    - Memory-based context retention
+    - Dynamic strategy adaptation
+    
+    **Parameters:**
+    - **task**: Natural language description of what to accomplish
+    - **context**: User-provided context (preferences, constraints, form data)
+    - **max_iterations**: Maximum actions before stopping (default: 50)
+    - **max_time_seconds**: Maximum execution time (default: 1800 / 30 min)
+    
+    **Returns:**
+    - Success status and any extracted data
+    - Execution metrics (iterations, duration)
+    - LLM usage statistics
+    - Execution history
+    """
+    try:
+        browser = session_manager.get_session(session_id)
+        
+        # Execute agent task using the agent() method
+        result = await browser.agent(
+            task=request.task,
+            context=request.context,
+            max_iterations=request.max_iterations,
+            max_time_seconds=request.max_time_seconds,
+            return_metadata=False,  # Get raw dict for API response
+        )
+        
+        # Handle both dict and AgentRequestResponse
+        if hasattr(result, 'to_dict'):
+            result = result.to_dict()
+        elif hasattr(result, 'success'):
+            result = {
+                "success": result.success,
+                "result": result.data,
+                "error": result.error,
+            }
+        
+        return AgentResponse(
+            success=result.get("success", False),
+            task=request.task,
+            result_data=result.get("result") or result.get("result_data"),
+            iterations=result.get("total_iterations", 0) or result.get("iterations", 0),
+            duration_seconds=result.get("execution_time_ms", 0) / 1000 if result.get("execution_time_ms") else result.get("duration_seconds", 0.0),
+            final_url=result.get("final_url", ""),
+            error_message=result.get("error"),
+            execution_history=result.get("steps", []) or result.get("execution_history", []),
+            llm_usage=None,  # TODO: Extract from result if available
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session not found: {session_id}",
+        )
+    except Exception as e:
+        logger.error(f"Agent execution failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Agent execution failed: {str(e)}",
+        )
+
+
+# Observe endpoint
+@app.post(
+    "/sessions/{session_id}/observe",
+    response_model=ObserveResponse,
+    tags=["Automation"],
+    summary="Observe and find elements",
+    description="Analyze the page to find elements matching a natural language description.",
+)
+async def observe_elements(
+    session_id: str,
+    request: ObserveRequest,
+):
+    """
+    Observe and identify elements on the current page.
+    
+    Analyzes the page to find elements matching a natural language description.
+    Returns selectors, element info, and actionable suggestions.
+    
+    **Use cases:**
+    - Find elements before acting on them
+    - Understand page structure
+    - Get reliable selectors for automation
+    - Verify elements exist before interaction
+    
+    **Parameters:**
+    - **query**: Natural language description of what to find
+    - **return_selectors**: Include CSS selectors in response (default: true)
+    
+    **Returns:**
+    - List of found elements with selectors and descriptions
+    - Confidence scores
+    - Actionability information
+    """
+    try:
+        browser = session_manager.get_session(session_id)
+        
+        # Execute observe using the observe() method
+        result = await browser.observe(
+            query=request.query,
+            return_selectors=request.return_selectors,
+            return_metadata=False,  # Get raw data for API response
+        )
+        
+        # Handle both dict/list and AgentRequestResponse
+        elements = []
+        page_url = None
+        success = True
+        error = None
+        
+        if isinstance(result, list):
+            elements = result
+            success = len(result) > 0
+        elif hasattr(result, 'data'):
+            elements = result.data if isinstance(result.data, list) else [result.data] if result.data else []
+            success = result.success
+            error = result.error
+        elif isinstance(result, dict):
+            elements = result.get("elements", [])
+            page_url = result.get("page_url")
+            success = result.get("success", len(elements) > 0)
+            error = result.get("error")
+        
+        return ObserveResponse(
+            success=success,
+            elements=elements,
+            page_url=page_url,
+            error=error,
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session not found: {session_id}",
+        )
+    except Exception as e:
+        logger.error(f"Observe failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Observe failed: {str(e)}",
+        )
+
+
 # Screenshot endpoints
 @app.post(
     "/sessions/{session_id}/screenshot",
@@ -800,7 +1012,6 @@ async def monitor_condition(
 async def capture_screenshot(
     session_id: str,
     request: ScreenshotRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """
     Capture a screenshot of the current page.
@@ -850,7 +1061,6 @@ async def capture_screenshot(
 async def start_recording(
     session_id: str,
     request: RecordingStartRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Start recording the browser session."""
     try:
@@ -884,7 +1094,6 @@ async def start_recording(
 )
 async def stop_recording(
     session_id: str,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Stop recording and return recording data."""
     try:
@@ -925,7 +1134,6 @@ async def stop_recording(
 async def start_stream(
     session_id: str,
     request: StreamStartRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Start streaming the browser session."""
     if not streaming_manager:
@@ -946,6 +1154,9 @@ async def start_stream(
             protocol=StreamingProtocol(request.protocol),
             quality_profile=QualityProfile(request.quality),
             codec=VideoCodec(request.codec),
+            width=request.width or 1920,
+            height=request.height or 1080,
+            frame_rate=request.frame_rate or 30,
             rtmp_url=request.rtmp_url,
             rtmp_key=request.rtmp_key,
             max_viewers=request.max_viewers,
@@ -961,6 +1172,7 @@ async def start_stream(
             dash_url=stream_info.dash_url,
             rtmp_url=stream_info.rtmp_url,
             websocket_url=stream_info.websocket_url,
+            player_url=stream_info.player_url,
         )
         
     except KeyError:
@@ -990,7 +1202,6 @@ async def start_stream(
 )
 async def get_stream_status(
     session_id: str,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Get stream status for a session."""
     if not streaming_manager:
@@ -1023,6 +1234,7 @@ async def get_stream_status(
                 "dash": stream_info.dash_url,
                 "rtmp": stream_info.rtmp_url,
                 "websocket": stream_info.websocket_url,
+                "player": stream_info.player_url,
             },
         )
         
@@ -1045,7 +1257,6 @@ async def get_stream_status(
 )
 async def stop_stream(
     session_id: str,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Stop streaming for a session."""
     if not streaming_manager:
@@ -1101,7 +1312,6 @@ async def stop_stream(
 async def list_recordings(
     session_id: Optional[str] = None,
     limit: int = 100,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """List available recordings."""
     if not recording_storage:
@@ -1133,7 +1343,6 @@ async def list_recordings(
 )
 async def get_recording_download(
     recording_id: str,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Get download information for a recording."""
     if not recording_storage:
@@ -1189,7 +1398,6 @@ async def get_recording_download(
 )
 async def delete_recording(
     recording_id: str,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Delete a recording."""
     if not recording_storage:
@@ -1219,7 +1427,91 @@ async def delete_recording(
 
 
 # Stream serving endpoints (for HLS/DASH)
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse, Response, HTMLResponse
+
+
+@app.get(
+    "/flybrowser/blank",
+    response_class=HTMLResponse,
+    tags=["Health"],
+    summary="FlyBrowser blank page",
+    description="Get the FlyBrowser custom blank page shown when the browser starts.",
+)
+async def get_blank_page():
+    """Serve the FlyBrowser custom blank page.
+    
+    This page is displayed when the browser starts, showing a branded
+    'waiting for agent' state instead of a plain white about:blank page.
+    """
+    html = render_blank_html(
+        static_url="/static",
+        inline_assets=False,
+    )
+    return HTMLResponse(content=html)
+
+
+@app.get(
+    "/streams/{stream_id}/player",
+    response_class=HTMLResponse,
+    tags=["Streaming"],
+    summary="Embedded web player",
+    description="Get an embedded web player page for the stream.",
+)
+async def get_stream_player(stream_id: str):
+    """Serve embedded web player for the stream."""
+    if not streaming_manager:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Streaming not enabled",
+        )
+    
+    try:
+        stream_info = await streaming_manager.get_stream(stream_id)
+        if not stream_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Stream not found",
+            )
+        
+        # Determine protocol and URLs
+        protocol = stream_info.protocol.value if hasattr(stream_info.protocol, 'value') else str(stream_info.protocol)
+        hls_url = stream_info.hls_url or ''
+        dash_url = stream_info.dash_url or ''
+        
+        # Get quality label from stream config
+        config = stream_info.config
+        quality_label = f"{config.width}x{config.height}@{config.frame_rate}fps"
+        if hasattr(config, 'quality_profile'):
+            profile_name = config.quality_profile.value if hasattr(config.quality_profile, 'value') else str(config.quality_profile)
+            quality_label = f"{profile_name.upper()} ({config.width}x{config.height})"
+        
+        # Get quality profile for player optimization
+        quality_profile = ""
+        if hasattr(config, 'quality_profile'):
+            quality_profile = config.quality_profile.value if hasattr(config.quality_profile, 'value') else str(config.quality_profile)
+        
+        # Render HTML with stream details using Jinja2 template
+        html = render_player_html(
+            stream_id=stream_id,
+            protocol=protocol,
+            hls_url=hls_url,
+            dash_url=dash_url,
+            quality=quality_label,
+            quality_profile=quality_profile,
+            static_url="/static",
+            inline_assets=False,
+        )
+        
+        return HTMLResponse(content=html)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get stream player failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
 
 
 @app.get(
@@ -1310,7 +1602,6 @@ async def get_hls_segment(stream_id: str, segment_name: str):
 async def store_credential(
     session_id: str,
     request: StoreCredentialRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Store a credential securely."""
     try:
@@ -1353,7 +1644,6 @@ async def store_credential(
 async def secure_fill(
     session_id: str,
     request: SecureFillRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Securely fill a form field with a stored credential."""
     try:
@@ -1390,7 +1680,6 @@ async def secure_fill(
 )
 async def mask_pii(
     request: MaskPIIRequest,
-    api_key: APIKey = Depends(verify_api_key),
 ):
     """Mask PII in text."""
     from flybrowser.security.pii_handler import PIIMasker

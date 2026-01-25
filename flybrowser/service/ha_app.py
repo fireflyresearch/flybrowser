@@ -38,7 +38,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from flybrowser import __version__
-from flybrowser.service.auth import verify_api_key
 from flybrowser.service.cluster.ha_node import HAClusterNode, HANodeConfig
 from flybrowser.service.cluster.raft import NodeRole
 from flybrowser.service.cluster.exceptions import (
@@ -102,6 +101,37 @@ async def ha_lifespan(app: FastAPI):
     logger.info("FlyBrowser HA service shut down")
 
 
+# API Documentation
+HA_API_DESCRIPTION = """
+# FlyBrowser HA API
+
+High-Availability browser automation and web scraping powered by LLM agents.
+
+## Overview
+
+This is the cluster-mode API for FlyBrowser, providing:
+
+- **Session Management**: Create and manage browser sessions with automatic load balancing
+- **Autonomous Mode**: Execute complex goals via the `/auto` endpoint
+- **Web Scraping**: Schema-validated scraping via the `/scrape` endpoint
+- **Cluster Operations**: Node management, session migration, and rebalancing
+- **Raft Consensus**: Strong consistency guarantees for cluster state
+
+## Cluster Features
+
+- **Automatic Leader Election**: Raft consensus ensures one leader at a time
+- **Session Routing**: Requests automatically route to the correct node
+- **Failover**: Sessions migrate automatically on node failure
+- **Load Balancing**: New sessions distributed across healthy nodes
+
+## Interactive Documentation
+
+- **Swagger UI**: `/docs` - Interactive API explorer
+- **ReDoc**: `/redoc` - Clean API documentation
+- **OpenAPI**: `/openapi.json` - Machine-readable spec
+"""
+
+
 def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
     """Create an HA-aware FastAPI application.
     
@@ -113,9 +143,47 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
     """
     app = FastAPI(
         title="FlyBrowser HA API",
-        description="High-Availability Browser Automation API",
+        description=HA_API_DESCRIPTION,
         version=__version__,
         lifespan=ha_lifespan,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        contact={
+            "name": "FlyBrowser Support",
+            "url": "https://flybrowser.dev",
+            "email": "support@flybrowser.dev",
+        },
+        license_info={
+            "name": "Apache 2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.html",
+        },
+        openapi_tags=[
+            {
+                "name": "Health",
+                "description": "Health check and cluster status endpoints",
+            },
+            {
+                "name": "Sessions",
+                "description": "Browser session management with cluster-aware routing",
+            },
+            {
+                "name": "Navigation",
+                "description": "Browser navigation and interaction",
+            },
+            {
+                "name": "Automation",
+                "description": "High-level automation - autonomous mode (`auto`) and schema-validated scraping (`scrape`)",
+            },
+            {
+                "name": "Cluster",
+                "description": "Cluster management - node operations, session migration, rebalancing",
+            },
+            {
+                "name": "Raft",
+                "description": "Raft consensus status and leadership management",
+            },
+        ],
     )
     
     # CORS
@@ -168,7 +236,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
     
     # ==================== Health Endpoints ====================
     
-    @app.get("/health")
+    @app.get("/health", tags=["Health"])
     async def health():
         """Health check endpoint."""
         node = get_ha_node()
@@ -179,19 +247,19 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
             "is_leader": node.is_leader,
         }
 
-    @app.get("/cluster/status")
+    @app.get("/cluster/status", tags=["Cluster"])
     async def cluster_status():
         """Get cluster status."""
         node = get_ha_node()
         return node.get_status()
 
-    @app.get("/raft/status")
+    @app.get("/raft/status", tags=["Raft"])
     async def raft_status():
         """Get Raft consensus status."""
         node = get_ha_node()
         return node._raft.get_status()
 
-    @app.get("/cluster/nodes")
+    @app.get("/cluster/nodes", tags=["Cluster"])
     async def list_nodes():
         """List all nodes in the cluster."""
         node = get_ha_node()
@@ -201,7 +269,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
             "leader_id": node.leader_id,
         }
 
-    @app.get("/cluster/sessions")
+    @app.get("/cluster/sessions", tags=["Cluster"])
     async def list_sessions(consistency: str = "eventual"):
         """List all sessions in the cluster.
         
@@ -228,7 +296,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
 
     # ==================== Cluster Management Endpoints ====================
 
-    @app.post("/cluster/nodes/{node_id}/drain")
+    @app.post("/cluster/nodes/{node_id}/drain", tags=["Cluster"])
     async def drain_node(node_id: str, request: Request):
         """Drain all sessions from a node.
         
@@ -309,7 +377,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
             "errors": errors if errors else None,
         }
 
-    @app.post("/cluster/step-down")
+    @app.post("/cluster/step-down", tags=["Raft"])
     async def step_down(request: Request):
         """Request the leader to step down and transfer leadership.
         
@@ -348,7 +416,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
                 "error": str(e),
             }
 
-    @app.post("/cluster/rebalance")
+    @app.post("/cluster/rebalance", tags=["Cluster"])
     async def rebalance():
         """Trigger manual session rebalancing across the cluster.
         
@@ -432,7 +500,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
 
     # ==================== Session Endpoints ====================
 
-    @app.post("/sessions")
+    @app.post("/sessions", tags=["Sessions"])
     async def create_session(request: Request):
         """Create a new browser session.
 
@@ -481,7 +549,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
                 )
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.delete("/sessions/{session_id}")
+    @app.delete("/sessions/{session_id}", tags=["Sessions"])
     async def delete_session(session_id: str):
         """Delete a browser session."""
         node = get_ha_node()
@@ -498,7 +566,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
                 )
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.get("/sessions/{session_id}")
+    @app.get("/sessions/{session_id}", tags=["Sessions"])
     async def get_session(
         session_id: str,
         consistency: str = "eventual",
@@ -546,7 +614,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
             "consistency": consistency,
         }
 
-    @app.get("/sessions/{session_id}/route")
+    @app.get("/sessions/{session_id}/route", tags=["Sessions"])
     async def route_session(session_id: str):
         """Get the node address for a session (for client routing)."""
         node = get_ha_node()
@@ -579,7 +647,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         target_address = node.get_node_for_session(session_id)
         return session, target_address
 
-    @app.post("/sessions/{session_id}/navigate")
+    @app.post("/sessions/{session_id}/navigate", tags=["Navigation"])
     async def navigate(session_id: str, request: Request):
         """Navigate to a URL."""
         node = get_ha_node()
@@ -615,7 +683,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/extract")
+    @app.post("/sessions/{session_id}/extract", tags=["Navigation"])
     async def extract_data(session_id: str, request: Request):
         """Extract data from the current page."""
         node = get_ha_node()
@@ -636,18 +704,38 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
 
         try:
             browser = node._session_manager.get_session(session_id)
-            result = await browser.extract(instruction, schema=schema)
+            # Use return_metadata=True to get full response with metrics
+            response = await browser.extract(instruction, schema=schema, return_metadata=True)
 
             return {
-                "success": True,
-                "data": result,
+                "success": response.success,
+                "data": response.data,
+                "llm_usage": {
+                    "prompt_tokens": response.llm_usage.prompt_tokens,
+                    "completion_tokens": response.llm_usage.completion_tokens,
+                    "total_tokens": response.llm_usage.total_tokens,
+                    "cost_usd": response.llm_usage.cost_usd,
+                    "model": response.llm_usage.model,
+                    "calls_count": response.llm_usage.calls_count,
+                },
+                "page_metrics": {
+                    "url": response.page_metrics.url,
+                    "title": response.page_metrics.title,
+                    "html_size_bytes": response.page_metrics.html_size_bytes,
+                    "html_size_kb": response.page_metrics.html_size_kb,
+                    "element_count": response.page_metrics.element_count,
+                },
+                "timing": {
+                    "total_ms": response.timing.total_ms,
+                    "phases": response.timing.phases,
+                },
             }
         except KeyError:
             raise HTTPException(status_code=404, detail="Session not found locally")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/action")
+    @app.post("/sessions/{session_id}/action", tags=["Navigation"])
     async def perform_action(session_id: str, request: Request):
         """Perform an action on the page."""
         node = get_ha_node()
@@ -667,18 +755,39 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
 
         try:
             browser = node._session_manager.get_session(session_id)
-            await browser.act(instruction)
+            # Use return_metadata=True to get full response with metrics
+            response = await browser.act(instruction, return_metadata=True)
 
             return {
-                "success": True,
+                "success": response.success,
                 "action_type": "act",
+                "duration_ms": int(response.timing.total_ms),
+                "llm_usage": {
+                    "prompt_tokens": response.llm_usage.prompt_tokens,
+                    "completion_tokens": response.llm_usage.completion_tokens,
+                    "total_tokens": response.llm_usage.total_tokens,
+                    "cost_usd": response.llm_usage.cost_usd,
+                    "model": response.llm_usage.model,
+                    "calls_count": response.llm_usage.calls_count,
+                },
+                "page_metrics": {
+                    "url": response.page_metrics.url,
+                    "title": response.page_metrics.title,
+                    "html_size_bytes": response.page_metrics.html_size_bytes,
+                    "html_size_kb": response.page_metrics.html_size_kb,
+                    "element_count": response.page_metrics.element_count,
+                },
+                "timing": {
+                    "total_ms": response.timing.total_ms,
+                    "phases": response.timing.phases,
+                },
             }
         except KeyError:
             raise HTTPException(status_code=404, detail="Session not found locally")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/screenshot")
+    @app.post("/sessions/{session_id}/screenshot", tags=["Navigation"])
     async def take_screenshot(session_id: str, request: Request):
         """Take a screenshot of the current page."""
         node = get_ha_node()
@@ -706,7 +815,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/recording/start")
+    @app.post("/sessions/{session_id}/recording/start", tags=["Navigation"])
     async def start_recording(session_id: str, request: Request):
         """Start recording the browser session."""
         node = get_ha_node()
@@ -731,7 +840,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/recording/stop")
+    @app.post("/sessions/{session_id}/recording/stop", tags=["Navigation"])
     async def stop_recording(session_id: str):
         """Stop recording and return recording data."""
         node = get_ha_node()
@@ -756,7 +865,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/secure-fill")
+    @app.post("/sessions/{session_id}/secure-fill", tags=["Navigation"])
     async def secure_fill(session_id: str, request: Request):
         """Securely fill a form field with a stored credential."""
         node = get_ha_node()
@@ -788,7 +897,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/credentials")
+    @app.post("/sessions/{session_id}/credentials", tags=["Navigation"])
     async def store_credential(session_id: str, request: Request):
         """Store a credential securely for later use."""
         node = get_ha_node()
@@ -825,7 +934,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/navigate-nl")
+    @app.post("/sessions/{session_id}/navigate-nl", tags=["Navigation"])
     async def navigate_natural_language(session_id: str, request: Request):
         """Navigate using natural language instructions."""
         node = get_ha_node()
@@ -860,7 +969,142 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/workflow")
+    @app.post("/sessions/{session_id}/agent", tags=["Automation"])
+    async def execute_agent(session_id: str, request: Request):
+        """Execute a task using the intelligent agent (recommended).
+        
+        This is the primary and recommended endpoint for complex browser automation.
+        The agent automatically selects the optimal reasoning strategy and adapts
+        dynamically during execution.
+        
+        **Features:**
+        - Automatic strategy selection based on task complexity
+        - Multi-tool orchestration (16+ browser tools)
+        - Automatic obstacle handling (cookie banners, modals, popups)
+        - Memory-based context retention
+        - Dynamic strategy adaptation
+        """
+        node = get_ha_node()
+        session, redirect_addr = _get_session_or_redirect(session_id)
+
+        if redirect_addr:
+            return RedirectResponse(
+                url=f"http://{redirect_addr}/sessions/{session_id}/agent",
+                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            )
+
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        task = body.get("task")
+        context = body.get("context", {})
+        max_iterations = body.get("max_iterations", 50)
+        max_time_seconds = body.get("max_time_seconds", 1800.0)
+
+        if not task:
+            raise HTTPException(status_code=400, detail="task is required")
+
+        try:
+            browser = node._session_manager.get_session(session_id)
+            result = await browser.agent(
+                task=task,
+                context=context,
+                max_iterations=max_iterations,
+                max_time_seconds=max_time_seconds,
+                return_metadata=False,  # Get raw dict for API response
+            )
+
+            # Handle both dict and AgentRequestResponse
+            if hasattr(result, 'to_dict'):
+                result = result.to_dict()
+            elif hasattr(result, 'success'):
+                result = {
+                    "success": result.success,
+                    "result": result.data,
+                    "error": result.error,
+                }
+
+            return {
+                "success": result.get("success", False),
+                "task": task,
+                "result_data": result.get("result") or result.get("result_data"),
+                "iterations": result.get("total_iterations", 0) or result.get("iterations", 0),
+                "duration_seconds": result.get("execution_time_ms", 0) / 1000 if result.get("execution_time_ms") else result.get("duration_seconds", 0.0),
+                "final_url": result.get("final_url", ""),
+                "error_message": result.get("error"),
+                "execution_history": result.get("steps", []) or result.get("execution_history", []),
+            }
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Session not found locally")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/sessions/{session_id}/observe", tags=["Automation"])
+    async def observe_elements(session_id: str, request: Request):
+        """Observe and identify elements on the current page.
+        
+        Analyzes the page to find elements matching a natural language description.
+        Returns selectors, element info, and actionable suggestions.
+        
+        **Use cases:**
+        - Find elements before acting on them
+        - Understand page structure
+        - Get reliable selectors for automation
+        - Verify elements exist before interaction
+        """
+        node = get_ha_node()
+        session, redirect_addr = _get_session_or_redirect(session_id)
+
+        if redirect_addr:
+            return RedirectResponse(
+                url=f"http://{redirect_addr}/sessions/{session_id}/observe",
+                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            )
+
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        query = body.get("query")
+        return_selectors = body.get("return_selectors", True)
+
+        if not query:
+            raise HTTPException(status_code=400, detail="query is required")
+
+        try:
+            browser = node._session_manager.get_session(session_id)
+            result = await browser.observe(
+                query=query,
+                return_selectors=return_selectors,
+                return_metadata=False,  # Get raw data for API response
+            )
+
+            # Handle both dict/list and AgentRequestResponse
+            elements = []
+            page_url = None
+            success = True
+            error = None
+
+            if isinstance(result, list):
+                elements = result
+                success = len(result) > 0
+            elif hasattr(result, 'data'):
+                elements = result.data if isinstance(result.data, list) else [result.data] if result.data else []
+                success = result.success
+                error = result.error
+            elif isinstance(result, dict):
+                elements = result.get("elements", [])
+                page_url = result.get("page_url")
+                success = result.get("success", len(elements) > 0)
+                error = result.get("error")
+
+            return {
+                "success": success,
+                "elements": elements,
+                "page_url": page_url,
+                "error": error,
+            }
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Session not found locally")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/sessions/{session_id}/workflow", tags=["Automation"])
     async def execute_workflow(session_id: str, request: Request):
         """Execute a multi-step workflow."""
         node = get_ha_node()
@@ -896,7 +1140,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/sessions/{session_id}/monitor")
+    @app.post("/sessions/{session_id}/monitor", tags=["Navigation"])
     async def monitor_condition(session_id: str, request: Request):
         """Monitor for a condition to be met."""
         node = get_ha_node()
@@ -932,7 +1176,7 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.post("/pii/mask")
+    @app.post("/pii/mask", tags=["Navigation"])
     async def mask_pii(request: Request):
         """Mask PII in text."""
         body = await request.json() if request.headers.get("content-type") == "application/json" else {}

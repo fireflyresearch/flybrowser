@@ -173,7 +173,6 @@ class ServiceConfig(BaseSettings):
     cluster: ClusterConfig = Field(default_factory=ClusterConfig)
     
     # API settings
-    api_key_header: str = Field(default="X-API-Key", description="API key header name")
     cors_origins: List[str] = Field(default_factory=lambda: ["*"], description="CORS origins")
     
     # Recording settings

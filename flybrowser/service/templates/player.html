@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlyBrowser Stream</title>
+    {% if inline_styles %}
+    <style>{{ css_content | safe }}</style>
+    {% else %}
+    <link rel="stylesheet" href="{{ static_url }}/css/player.css">
+    {% endif %}
+</head>
+<body>
+    <!-- Matrix rain canvas -->
+    <canvas id="matrix-rain"></canvas>
+    
+    <div class="bg-gradient"></div>
+    
+    <div class="container">
+        <header class="header">
+            <div class="brand">
+                <pre class="brand-logo">  _____.__         ___.
+_/ ____\  | ___.__.\_ |_________  ______  _  ________ ___________
+\   __\|  |&lt;   |  | | __ \_  __ \/  _ \ \/ \/ /  ___// __ \_  __ \
+ |  |  |  |_\___  | | \_\ \  | \(  &lt;_&gt; )     /\___ \\  ___/|  | \/
+ |__|  |____/ ____| |___  /__|   \____/ \/\_//____  &gt;\___  &gt;__|
+            \/          \/                        \/     \/</pre>
+                <div class="brand-title">
+                    <span class="brand-title-text">LIVE STREAM BROWSER AUTOMATION PLAYER</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="stream-badge connecting" id="status-badge">
+                    <div class="status-dot"></div>
+                    <span id="status-text">Connecting...</span>
+                </div>
+            </div>
+        </header>
+        
+        <main class="main">
+            <div class="player-wrapper">
+                <div class="video-container">
+                    <video id="video" controls playsinline></video>
+                    <div class="loading-overlay" id="loading-overlay">
+                        <div class="spinner"></div>
+                    <div class="loading-text">
+                            <strong>Initializing stream...</strong><br>
+                            Waiting for video data
+                        </div>
+                        <div class="retry-count" id="retry-count"></div>
+                    </div>
+                </div>
+                <div class="info-bar">
+                    <div class="info-group">
+                        <div class="info-item">
+                            <span class="info-label">Stream ID</span>
+                            <span class="info-value highlight">{{ stream_id_short }}...</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Protocol</span>
+                            <span class="info-value">{{ protocol | upper }}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Quality</span>
+                            <span class="info-value">{{ quality | default('720p') }}</span>
+                        </div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-item">
+                            <span class="info-label">Latency</span>
+                            <span class="info-value" id="latency">--</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Buffer</span>
+                            <span class="info-value" id="buffer">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="url-section">
+                <div class="url-header">
+                    <h3>Stream URL</h3>
+                    <button class="copy-btn" id="copy-btn">Copy URL</button>
+                </div>
+                <div class="url-display" id="stream-url">{{ stream_url }}</div>
+            </div>
+        </main>
+        
+        <footer class="footer">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <span class="footer-company">Firefly Software Solutions Inc</span>
+                    <span class="footer-separator">•</span>
+                    <span class="footer-license">Apache 2.0 License</span>
+                </div>
+                <div class="footer-divider"></div>
+                <div class="footer-meta">
+                    <span class="footer-made">Crafted with</span>
+                    <span class="footer-heart">❤️</span>
+                    <span class="footer-matrix">in the Matrix</span>
+                </div>
+            </div>
+        </footer>
+    </div>
+    
+    <!-- HLS.js for HLS playback -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
+    <!-- dash.js for DASH playback -->
+    <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+    
+    {% if inline_scripts %}
+    <script>{{ js_content | safe }}</script>
+    {% else %}
+    <script src="{{ static_url }}/js/player.js"></script>
+    {% endif %}
+    
+    <script>
+        // Matrix Rain Animation
+        class MatrixRain {
+            constructor(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                if (!this.canvas) return;
+                this.ctx = this.canvas.getContext('2d');
+                this.characters = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                this.fontSize = 14;
+                this.columns = 0;
+                this.drops = [];
+                this.init();
+                this.animate();
+                window.addEventListener('resize', () => this.init());
+            }
+            init() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                this.columns = Math.floor(this.canvas.width / this.fontSize);
+                this.drops = [];
+                for (let i = 0; i < this.columns; i++) {
+                    this.drops[i] = Math.random() * -100;
+                }
+            }
+            draw() {
+                this.ctx.fillStyle = 'rgba(5, 5, 5, 0.05)';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                this.ctx.fillStyle = '#00ff41';
+                this.ctx.font = this.fontSize + 'px JetBrains Mono, monospace';
+                for (let i = 0; i < this.drops.length; i++) {
+                    const char = this.characters[Math.floor(Math.random() * this.characters.length)];
+                    const x = i * this.fontSize;
+                    const y = this.drops[i] * this.fontSize;
+                    this.ctx.fillStyle = 'rgba(0, 255, 65, ' + (Math.random() * 0.5 + 0.5) + ')';
+                    this.ctx.fillText(char, x, y);
+                    if (y > this.canvas.height && Math.random() > 0.975) {
+                        this.drops[i] = 0;
+                    }
+                    this.drops[i] += 0.5 + Math.random() * 0.5;
+                }
+            }
+            animate() {
+                this.draw();
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+        
+        // Initialize player and matrix rain
+        document.addEventListener('DOMContentLoaded', function() {
+            new MatrixRain('matrix-rain');
+            const player = new FlyBrowserPlayer({
+                protocol: '{{ protocol }}',
+                hlsUrl: '{{ hls_url }}',
+                dashUrl: '{{ dash_url }}',
+                qualityProfile: '{{ quality_profile | default("") }}',
+                maxRetries: {{ max_retries | default(30) }},
+                retryDelay: {{ retry_delay | default(2000) }}
+            });
+        });
+    </script>
+</body>
+</html>

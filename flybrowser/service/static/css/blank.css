@@ -1,0 +1,389 @@
+/**
+ * FlyBrowser Blank Page - Matrix Theme
+ * Premium dark design with green accents inspired by The Matrix
+ * Shows "Waiting for Agent" state when browser starts
+ */
+
+/* Import fonts */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+    /* Matrix color palette - refined */
+    --bg-primary: #050505;
+    --bg-secondary: #0a0a0a;
+    --bg-tertiary: #101010;
+    --bg-card: #0c0c0c;
+    --bg-elevated: #141414;
+    --matrix-green: #00ff41;
+    --matrix-green-bright: #33ff66;
+    --matrix-green-dim: #00cc33;
+    --matrix-green-glow: rgba(0, 255, 65, 0.5);
+    --matrix-green-subtle: rgba(0, 255, 65, 0.08);
+    --matrix-cyan: #00e5ff;
+    --text-primary: #00ff41;
+    --text-secondary: #00dd38;
+    --text-muted: #008825;
+    --text-dim: #005518;
+    --text-white: #e0e0e0;
+    --success: #00ff41;
+    --warning: #ffd000;
+    --error: #ff4444;
+    --border: rgba(0, 255, 65, 0.15);
+    --border-bright: rgba(0, 255, 65, 0.4);
+    --shadow-glow: 0 0 30px rgba(0, 255, 65, 0.15);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-white);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Matrix rain canvas */
+#matrix-rain {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    opacity: 0.15;
+    pointer-events: none;
+}
+
+/* Ambient glow background */
+.bg-gradient {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 255, 65, 0.12) 0%, transparent 50%),
+        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(0, 255, 65, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse 60% 40% at 0% 100%, rgba(0, 255, 65, 0.06) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* Subtle noise texture */
+.bg-gradient::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    opacity: 0.03;
+    pointer-events: none;
+}
+
+/* Main container */
+.container {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px;
+    max-width: 800px;
+}
+
+/* Logo section */
+.logo-section {
+    margin-bottom: 40px;
+    text-align: center;
+}
+
+.brand-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 4rem;
+    font-weight: 700;
+    color: var(--matrix-green);
+    text-shadow: 
+        0 0 20px var(--matrix-green-glow), 
+        0 0 40px rgba(0, 255, 65, 0.3),
+        0 0 60px rgba(0, 255, 65, 0.2);
+    letter-spacing: 4px;
+    animation: logo-glow 3s ease-in-out infinite;
+}
+
+.brand-tagline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1rem;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-top: 12px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}
+
+@keyframes logo-glow {
+    0%, 100% {
+        text-shadow: 
+            0 0 20px var(--matrix-green-glow), 
+            0 0 40px rgba(0, 255, 65, 0.3),
+            0 0 60px rgba(0, 255, 65, 0.2);
+    }
+    50% {
+        text-shadow: 
+            0 0 30px var(--matrix-green-glow), 
+            0 0 60px rgba(0, 255, 65, 0.4),
+            0 0 80px rgba(0, 255, 65, 0.3);
+    }
+}
+
+/* Status section */
+.status-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+}
+
+/* Spinner container */
+.spinner-container {
+    position: relative;
+    width: 80px;
+    height: 80px;
+}
+
+/* Outer ring */
+.spinner-outer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 80px;
+    height: 80px;
+    border: 2px solid var(--bg-elevated);
+    border-top-color: var(--matrix-green);
+    border-radius: 50%;
+    animation: spin 1.2s linear infinite;
+    box-shadow: 0 0 20px var(--matrix-green-glow);
+}
+
+/* Inner ring */
+.spinner-inner {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    width: 50px;
+    height: 50px;
+    border: 2px solid var(--bg-elevated);
+    border-bottom-color: var(--matrix-cyan);
+    border-radius: 50%;
+    animation: spin-reverse 0.8s linear infinite;
+    box-shadow: 0 0 15px rgba(0, 229, 255, 0.3);
+}
+
+/* Center dot */
+.spinner-center {
+    position: absolute;
+    top: 35px;
+    left: 35px;
+    width: 10px;
+    height: 10px;
+    background: var(--matrix-green);
+    border-radius: 50%;
+    animation: pulse-center 1.5s ease-in-out infinite;
+    box-shadow: 0 0 15px var(--matrix-green-glow);
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes spin-reverse {
+    to { transform: rotate(-360deg); }
+}
+
+@keyframes pulse-center {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.3);
+        opacity: 0.7;
+    }
+}
+
+/* Status text */
+.status-text {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.status-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--matrix-green);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    text-shadow: 0 0 15px var(--matrix-green-glow);
+}
+
+.status-subtitle {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    max-width: 400px;
+}
+
+/* Animated dots */
+.waiting-dots {
+    display: inline-block;
+    width: 24px;
+    text-align: left;
+}
+
+.waiting-dots::after {
+    content: '';
+    animation: dots 1.5s steps(4, end) infinite;
+}
+
+@keyframes dots {
+    0% { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+    100% { content: ''; }
+}
+
+/* Status badge */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: linear-gradient(135deg, rgba(0, 255, 65, 0.1), rgba(0, 255, 65, 0.02));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-top: 16px;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--matrix-green);
+    border-radius: 50%;
+    animation: blink 1s ease-in-out infinite;
+    box-shadow: 0 0 10px var(--matrix-green-glow);
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* Footer */
+.footer {
+    position: fixed;
+    bottom: 24px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    z-index: 2;
+}
+
+.footer span:first-child {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .container {
+        padding: 24px;
+    }
+    
+    .brand-logo {
+        font-size: 0.38rem;
+    }
+    
+    .status-title {
+        font-size: 0.95rem;
+        letter-spacing: 2px;
+    }
+    
+    .status-subtitle {
+        font-size: 0.8rem;
+    }
+    
+    .footer {
+        flex-direction: column;
+        gap: 8px;
+        bottom: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    .brand-logo {
+        font-size: 0.3rem;
+    }
+    
+    .spinner-container {
+        width: 60px;
+        height: 60px;
+    }
+    
+    .spinner-outer {
+        width: 60px;
+        height: 60px;
+    }
+    
+    .spinner-inner {
+        top: 12px;
+        left: 12px;
+        width: 36px;
+        height: 36px;
+    }
+    
+    .spinner-center {
+        top: 25px;
+        left: 25px;
+    }
+}
+
+/* Selection color */
+::selection {
+    background: var(--matrix-green);
+    color: var(--bg-primary);
+}
