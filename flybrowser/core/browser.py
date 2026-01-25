@@ -611,6 +611,55 @@ class BrowserManager:
         except Exception as e:
             # If loading fails, just continue with about:blank
             logger.debug(f"Could not load custom blank page: {e}")
+    
+    async def _load_completion_page(
+        self,
+        success: bool,
+        task: str,
+        duration_ms: float,
+        iterations: int,
+        result_data: Optional[Any] = None,
+        error_message: Optional[str] = None,
+        max_iterations: Optional[int] = None,
+    ) -> None:
+        """
+        Load the agent completion page with task results.
+        
+        This displays a summary page after the agent() method completes execution,
+        showing the task status (success/failure), execution metrics, and any
+        result data or error messages.
+        
+        Args:
+            success: Whether the agent task completed successfully
+            task: The task description that was executed
+            duration_ms: Execution duration in milliseconds
+            iterations: Number of iterations used
+            result_data: Optional result data (for successful extractions)
+            error_message: Optional error message (for failures)
+            max_iterations: Optional max iterations limit for display
+        """
+        try:
+            from flybrowser.service.template_renderer import render_completion_html
+            
+            # Render completion page with inline assets (no server required)
+            html = render_completion_html(
+                success=success,
+                task=task,
+                duration_ms=duration_ms,
+                iterations=iterations,
+                result_data=result_data,
+                error_message=error_message,
+                max_iterations=max_iterations,
+                inline_assets=True,
+            )
+            
+            # Inject the HTML directly into the page
+            await self._page.set_content(html, wait_until="domcontentloaded")
+            
+            logger.debug(f"Agent completion page loaded (success={success})")
+        except Exception as e:
+            # If loading fails, log but don't fail the overall operation
+            logger.debug(f"Could not load completion page: {e}")
 
     async def stop(self) -> None:
         """

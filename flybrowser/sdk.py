@@ -1094,6 +1094,23 @@ class FlyBrowser:
             self.react_agent.config.max_iterations = original_max_iterations
             self.react_agent.config.timeout_seconds = original_timeout
         
+        # Load completion page showing task summary AFTER all execution is done
+        # This only happens after the entire agent query is solved (success or failure)
+        if self.browser_manager:
+            try:
+                await self.browser_manager._load_completion_page(
+                    success=result_dict.get("success", False),
+                    task=task,
+                    duration_ms=result_dict.get("execution_time_ms", 0),
+                    iterations=result_dict.get("total_iterations", 0),
+                    result_data=result_dict.get("result"),
+                    error_message=result_dict.get("error"),
+                    max_iterations=result_dict.get("max_iterations"),
+                )
+            except Exception as e:
+                # Don't fail the overall operation if completion page fails
+                logger.debug(f"Could not load completion page: {e}")
+        
         if return_metadata:
             # Convert dict to AgentRequestResponse
             return create_response(
