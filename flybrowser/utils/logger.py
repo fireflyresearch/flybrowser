@@ -22,6 +22,24 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
 
+from flybrowser.utils.execution_logger import (
+    ExecutionLogger,
+    LogVerbosity,
+    configure_execution_logger,
+    get_execution_logger,
+)
+
+# Re-export for convenience
+__all__ = [
+    "logger",
+    "setup_logger",
+    "configure_logging",
+    "LogFormat",
+    "LogVerbosity",
+    "get_execution_logger",
+    "configure_execution_logger",
+]
+
 
 class LogFormat(str, Enum):
     """Supported log output formats."""
@@ -273,4 +291,8 @@ def setup_logger(
 
 # Default logger instance
 logger = setup_logger()
+
+# Execution logger for hierarchical, verbosity-aware logging
+# This is the preferred logger for execution flow
+elog = get_execution_logger()
 

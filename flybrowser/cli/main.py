@@ -257,6 +257,7 @@ def cmd_repl(args: argparse.Namespace) -> int:
             llm_model=args.model,
             headless=args.headless,
             api_key=args.api_key or os.environ.get(f"{args.provider.upper()}_API_KEY"),
+            log_verbosity=getattr(args, 'verbosity', 'normal'),
         )
         repl.run()
         return 0
@@ -411,6 +412,12 @@ Documentation: https://flybrowser.dev/docs
         "--api-key",
         help="LLM API key (uses env var if not provided)",
     )
+    repl_parser.add_argument(
+        "--verbosity", "-v",
+        choices=["silent", "minimal", "normal", "verbose", "debug"],
+        default=os.environ.get("FLYBROWSER_LOG_VERBOSITY", "normal"),
+        help="Execution log verbosity: silent, minimal, normal, verbose, debug (default: normal)",
+    )
     repl_parser.set_defaults(func=cmd_repl)
     
     # setup command (pass-through)
@@ -488,6 +495,12 @@ Documentation: https://flybrowser.dev/docs
     stream_play_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
     stream_play_parser.add_argument("--player", choices=["auto", "ffplay", "vlc", "mpv"], default="auto", help="Player to use")
     stream_play_parser.set_defaults(func=cmd_stream_play)
+    
+    # stream web (open embedded player in browser)
+    stream_web_parser = stream_subparsers.add_parser("web", help="Open stream in web browser (embedded player)")
+    stream_web_parser.add_argument("session_id", help="Session ID")
+    stream_web_parser.add_argument("--endpoint", default="http://localhost:8000", help="API endpoint")
+    stream_web_parser.set_defaults(func=cmd_stream_web)
     
     # recordings command
     recordings_parser = subparsers.add_parser(
@@ -675,12 +688,53 @@ def cmd_stream_url(args):
         response.raise_for_status()
         result = response.json()
         
-        if "stream_url" in result:
-            print(result["stream_url"])
+        # Extract stream URL from nested structure
+        stream_url = None
+        if result.get('urls', {}).get('hls'):
+            stream_url = result['urls']['hls']
+        elif result.get('urls', {}).get('dash'):
+            stream_url = result['urls']['dash']
+        
+        if stream_url:
+            print(stream_url)
             return 0
         else:
             print("Stream not found or not active")
             return 1
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_stream_web(args):
+    """Open stream in web browser using embedded player"""
+    import requests
+    import webbrowser
+    
+    endpoint = args.endpoint.rstrip("/")
+    url = f"{endpoint}/sessions/{args.session_id}/stream/status"
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        result = response.json()
+        
+        # Extract player URL from nested structure
+        player_url = result.get('urls', {}).get('player')
+        
+        if not player_url:
+            # Fallback: construct player URL from stream_id
+            stream_id = result.get('stream_id')
+            if stream_id:
+                player_url = f"{endpoint}/streams/{stream_id}/player"
+            else:
+                print("Error: No player URL found. Is the stream active?")
+                return 1
+        
+        print(f"Opening web player: {player_url}")
+        webbrowser.open(player_url)
+        return 0
+        
     except requests.exceptions.RequestException as e:
         print(f"Error: {e}")
         return 1

@@ -66,17 +66,17 @@ def print_info(msg: str) -> None:
 
 def print_success(msg: str) -> None:
     """Print a success message."""
-    print(f"{Colors.GREEN}✓ {msg}{Colors.NC}")
+    print(f"{Colors.GREEN}[ok] {msg}{Colors.NC}")
 
 
 def print_warning(msg: str) -> None:
     """Print a warning message."""
-    print(f"{Colors.YELLOW}⚠ {msg}{Colors.NC}")
+    print(f"{Colors.YELLOW}[warning] {msg}{Colors.NC}")
 
 
 def print_error(msg: str) -> None:
     """Print an error message."""
-    print(f"{Colors.RED}✗ {msg}{Colors.NC}")
+    print(f"{Colors.RED}[fail] {msg}{Colors.NC}")
 
 
 def print_step(msg: str) -> None:
@@ -285,7 +285,7 @@ def print_summary(keep_data: bool, remove_all: bool) -> None:
     """Print uninstall summary."""
     print()
     print(f"{Colors.GREEN}{'═' * 60}{Colors.NC}")
-    print(f"{Colors.GREEN}✓ FlyBrowser has been uninstalled{Colors.NC}")
+    print(f"{Colors.GREEN}[ok] FlyBrowser has been uninstalled{Colors.NC}")
     print(f"{Colors.GREEN}{'═' * 60}{Colors.NC}")
     print()
     

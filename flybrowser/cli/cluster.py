@@ -228,18 +228,18 @@ def cmd_health(args: argparse.Namespace) -> int:
                         else:
                             status = data.get("status", "unknown")
                             if status == "healthy":
-                                print(f"✓ Cluster is healthy")
+                                print(f"[ok] Cluster is healthy")
                                 print(f"  Node: {data.get('node_id', 'N/A')}")
                                 print(f"  Role: {data.get('role', 'N/A')}")
                                 print(f"  Leader: {data.get('is_leader', False)}")
                             else:
-                                print(f"✗ Cluster is {status}")
+                                print(f"[fail] Cluster is {status}")
                         return 0 if status == "healthy" else 1
                     else:
-                        print(f"✗ Health check failed: {resp.status}")
+                        print(f"[fail] Health check failed: {resp.status}")
                         return 1
         except Exception as e:
-            print(f"✗ Health check failed: {e}", file=sys.stderr)
+            print(f"[fail] Health check failed: {e}", file=sys.stderr)
             return 1
 
     return asyncio.run(run())
@@ -276,19 +276,19 @@ def cmd_step_down(args: argparse.Namespace) -> int:
                         result = await resp.json()
                         if result.get("success"):
                             new_leader = result.get("new_leader", "pending")
-                            print(f"✓ Leadership transfer initiated")
+                            print(f"[ok] Leadership transfer initiated")
                             print(f"  New leader: {new_leader}")
                             return 0
                         else:
-                            print(f"✗ Step-down failed: {result.get('error', 'Unknown error')}")
+                            print(f"[fail] Step-down failed: {result.get('error', 'Unknown error')}")
                             return 1
                     else:
                         text = await resp.text()
-                        print(f"✗ Step-down failed: {resp.status} - {text}")
+                        print(f"[fail] Step-down failed: {resp.status} - {text}")
                         return 1
                         
         except Exception as e:
-            print(f"✗ Step-down failed: {e}", file=sys.stderr)
+            print(f"[fail] Step-down failed: {e}", file=sys.stderr)
             return 1
 
     return asyncio.run(run())
@@ -308,19 +308,19 @@ def cmd_rebalance(args: argparse.Namespace) -> int:
                         result = await resp.json()
                         if result.get("success"):
                             moved = result.get("sessions_moved", 0)
-                            print(f"✓ Rebalance complete")
+                            print(f"[ok] Rebalance complete")
                             print(f"  Sessions moved: {moved}")
                             return 0
                         else:
-                            print(f"✗ Rebalance failed: {result.get('error', 'Unknown error')}")
+                            print(f"[fail] Rebalance failed: {result.get('error', 'Unknown error')}")
                             return 1
                     else:
                         text = await resp.text()
-                        print(f"✗ Rebalance failed: {resp.status} - {text}")
+                        print(f"[fail] Rebalance failed: {resp.status} - {text}")
                         return 1
                         
         except Exception as e:
-            print(f"✗ Rebalance failed: {e}", file=sys.stderr)
+            print(f"[fail] Rebalance failed: {e}", file=sys.stderr)
             return 1
 
     return asyncio.run(run())

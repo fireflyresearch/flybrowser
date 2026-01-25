@@ -135,7 +135,7 @@ _/ ____\  | ___.__.\\_ |_________  ______  _  ________ ___________
             items: Dictionary of key-value pairs to display
             show_divider: Whether to show a divider line after the summary
         """
-        print(self._bold(f"▶ {title}"))
+        print(self._bold(f"> {title}"))
         print()
         
         # Calculate padding for alignment

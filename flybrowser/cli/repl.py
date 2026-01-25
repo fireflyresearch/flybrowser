@@ -145,6 +145,7 @@ class FlyBrowserREPL:
         llm_model: Optional[str] = None,
         headless: bool = True,
         api_key: Optional[str] = None,
+        log_verbosity: str = "normal",
     ):
         """Initialize the REPL.
         
@@ -153,11 +154,13 @@ class FlyBrowserREPL:
             llm_model: Model name (uses provider default if not specified)
             headless: Run browser in headless mode
             api_key: API key for LLM provider
+            log_verbosity: Execution log verbosity (silent, minimal, normal, verbose, debug)
         """
         self.llm_provider = llm_provider
         self.llm_model = llm_model
         self.headless = headless
         self.api_key = api_key
+        self.log_verbosity = log_verbosity
         
         self.browser = None
         self.session_started = None
@@ -244,6 +247,7 @@ class FlyBrowserREPL:
                 llm_model=self.llm_model,
                 headless=self.headless,
                 api_key=api_key,
+                log_verbosity=self.log_verbosity,
             )
             
             # Start the browser

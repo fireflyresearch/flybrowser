@@ -740,16 +740,16 @@ def cmd_install(args: argparse.Namespace) -> int:
         # Verify installation
         if verify_installation():
             print("\n" + "=" * 70)
-            print("[SUCCESS] 🚀 FlyBrowser Installation Complete!")
+            print("[SUCCESS] FlyBrowser Installation Complete!")
             print("=" * 70)
             
             # Print comprehensive summary
-            print("\n📦 What's Installed:")
-            print("  ✓ FlyBrowser Python package with all dependencies")
-            print("  ✓ Playwright browsers (Chromium, Firefox, WebKit)")
-            print("  ✓ CLI commands (flybrowser, flybrowser-setup, etc.)")
+            print("\nWhat's Installed:")
+            print("  [ok] FlyBrowser Python package with all dependencies")
+            print("  [ok] Playwright browsers (Chromium, Firefox, WebKit)")
+            print("  [ok] CLI commands (flybrowser, flybrowser-setup, etc.)")
             
-            print("\n✨ Key Features Available:")
+            print("\nKey Features Available:")
             print("  • Natural Language Control (LLM-powered agents)")
             print("  • Live Streaming & Recording (HLS/DASH/RTMP, H.264/H.265)")
             print("  • Smart Validators (Auto-fix LLM responses)")
@@ -758,7 +758,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             print("  • Hardware Acceleration (NVENC/VideoToolbox/QSV)")
             print("  • Built-in Observability (Metrics, logs, traces)")
             
-            print("\n⚙️  Available Commands:")
+            print("\nAvailable Commands:")
             print("  Main:")
             print("    flybrowser                    # Interactive REPL")
             print("    flybrowser version            # Show version")
@@ -773,7 +773,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             print("    flybrowser cluster status     # Cluster status")
             print("    flybrowser admin sessions     # Manage sessions")
             
-            print("\n🚀 Quick Start Examples:")
+            print("\nQuick Start Examples:")
             print("  1. Embedded Mode (Python SDK):")
             print("     from flybrowser import FlyBrowser")
             print("     browser = FlyBrowser()")
@@ -786,7 +786,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             print("  3. Interactive REPL:")
             print("     flybrowser                    # Launch REPL")
             
-            print("\n📋 Next Steps:")
+            print("\nNext Steps:")
             print("  1. Configure: flybrowser setup configure")
             print("     • Set up LLM providers (OpenAI, Anthropic, Gemini, Ollama)")
             print("     • Configure deployment mode (standalone/cluster)")
@@ -801,7 +801,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             print("     • API Server:        flybrowser serve")
             print("     • Python SDK:        from flybrowser import FlyBrowser")
             
-            print("\n📚 Resources:")
+            print("\nResources:")
             print("  Documentation: https://flybrowser.dev/docs")
             print("  GitHub:        https://github.com/firefly-oss/flybrowsers")
             print("  Discord:       https://discord.gg/flybrowser")
@@ -978,7 +978,7 @@ def check_jupyter_status() -> bool:
     
     # Check if jupyter is available
     jupyter_available = shutil.which("jupyter") is not None
-    print(f"  Jupyter command: {'✓ Available' if jupyter_available else '✗ Not found'}")
+    print(f"  Jupyter command: {'[ok] Available' if jupyter_available else '[fail] Not found'}")
     
     if not jupyter_available:
         print("")
@@ -995,7 +995,7 @@ def check_jupyter_status() -> bool:
         )
         
         kernel_installed = "flybrowser" in result.stdout
-        print(f"  FlyBrowser kernel: {'✓ Installed' if kernel_installed else '✗ Not installed'}")
+        print(f"  FlyBrowser kernel: {'[ok] Installed' if kernel_installed else '[fail] Not installed'}")
         
         if kernel_installed:
             # Extract kernel path from output
