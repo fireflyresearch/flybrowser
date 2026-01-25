@@ -15,7 +15,13 @@
 """Utility functions and helpers for FlyBrowser."""
 
 from flybrowser.utils.text_normalizer import normalize_text, normalize_data, is_normalized
-from flybrowser.utils.page_utils import is_blank_page, is_flybrowser_blank_page
+from flybrowser.utils.page_utils import (
+    is_blank_page,
+    is_flybrowser_blank_page,
+    is_completion_page,
+    is_flybrowser_completion_page,
+    is_flybrowser_internal_page,
+)
 
 __all__ = [
     "normalize_text",
@@ -23,5 +29,8 @@ __all__ = [
     "is_normalized",
     "is_blank_page",
     "is_flybrowser_blank_page",
+    "is_completion_page",
+    "is_flybrowser_completion_page",
+    "is_flybrowser_internal_page",
 ]
 

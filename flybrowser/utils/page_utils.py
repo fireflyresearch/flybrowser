@@ -28,6 +28,13 @@ FLYBROWSER_BLANK_MARKERS = [
     "FlyBrowser Blank Page",  # Text content marker
 ]
 
+# Markers that identify our custom completion page content
+FLYBROWSER_COMPLETION_MARKERS = [
+    "flybrowser-completion-page",  # CSS class marker
+    "data-flybrowser-completion",  # Data attribute marker
+    "FlyBrowser Completion Page",  # Text content marker
+]
+
 
 def is_blank_page(url: str, html: str = "") -> bool:
     """Check if a URL or page content represents a blank/empty page.
@@ -107,3 +114,70 @@ def is_flybrowser_blank_page(url: str = "", html: str = "") -> bool:
         return any(marker.lower() in html_lower for marker in FLYBROWSER_BLANK_MARKERS)
     
     return False
+
+
+def is_completion_page(url: str = "", html: str = "") -> bool:
+    """Check if a URL or page content represents a completion page.
+    
+    This function identifies FlyBrowser's custom completion page that displays
+    after the agent() method completes execution.
+    
+    Use this function to detect when the browser is showing the agent completion
+    summary rather than actual web content.
+    
+    Args:
+        url: The page URL to check
+        html: Optional HTML content of the page for additional detection
+        
+    Returns:
+        True if the page is a completion page, False otherwise
+        
+    Examples:
+        >>> is_completion_page("", "<div class='flybrowser-completion-page'>...</div>")
+        True
+        >>> is_completion_page("https://example.com")
+        False
+    """
+    # Check for FlyBrowser completion page URL pattern (if served via API)
+    if url and "/flybrowser/completion" in url.lower():
+        return True
+    
+    # Check HTML content for our custom completion page markers
+    if html:
+        html_lower = html.lower()
+        if any(marker.lower() in html_lower for marker in FLYBROWSER_COMPLETION_MARKERS):
+            return True
+    
+    return False
+
+
+def is_flybrowser_completion_page(url: str = "", html: str = "") -> bool:
+    """Check specifically if this is FlyBrowser's custom completion page.
+    
+    This is an alias for is_completion_page() for consistency with
+    is_flybrowser_blank_page().
+    
+    Args:
+        url: The page URL to check
+        html: Optional HTML content of the page
+        
+    Returns:
+        True if this is specifically FlyBrowser's completion page
+    """
+    return is_completion_page(url=url, html=html)
+
+
+def is_flybrowser_internal_page(url: str = "", html: str = "") -> bool:
+    """Check if the page is any FlyBrowser internal page (blank or completion).
+    
+    Use this function to detect when the browser is showing any FlyBrowser
+    internal page rather than actual web content.
+    
+    Args:
+        url: The page URL to check
+        html: Optional HTML content of the page
+        
+    Returns:
+        True if this is any FlyBrowser internal page
+    """
+    return is_flybrowser_blank_page(url=url, html=html) or is_completion_page(url=url, html=html)
