@@ -1,0 +1,487 @@
+/**
+ * FlyBrowser Completion Page - Matrix Theme
+ * Shows agent execution completion status with task summary
+ * Supports success (green) and failure (red) states
+ */
+
+/* Import fonts */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+    /* Matrix color palette - base */
+    --bg-primary: #050505;
+    --bg-secondary: #0a0a0a;
+    --bg-tertiary: #101010;
+    --bg-card: #0c0c0c;
+    --bg-elevated: #141414;
+    
+    /* Success colors (green) */
+    --success-primary: #00ff41;
+    --success-bright: #33ff66;
+    --success-dim: #00cc33;
+    --success-glow: rgba(0, 255, 65, 0.5);
+    --success-subtle: rgba(0, 255, 65, 0.08);
+    
+    /* Failure colors (red) */
+    --failure-primary: #ff4444;
+    --failure-bright: #ff6666;
+    --failure-dim: #cc3333;
+    --failure-glow: rgba(255, 68, 68, 0.5);
+    --failure-subtle: rgba(255, 68, 68, 0.08);
+    
+    /* Cyan accent */
+    --matrix-cyan: #00e5ff;
+    
+    /* Text colors */
+    --text-white: #e0e0e0;
+    --text-muted: #888888;
+    --text-dim: #555555;
+    
+    /* Borders */
+    --border-success: rgba(0, 255, 65, 0.2);
+    --border-failure: rgba(255, 68, 68, 0.2);
+    
+    /* Radii */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-white);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow-x: hidden;
+    overflow-y: auto;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* State-based accent colors */
+body.success {
+    --accent-primary: var(--success-primary);
+    --accent-bright: var(--success-bright);
+    --accent-dim: var(--success-dim);
+    --accent-glow: var(--success-glow);
+    --accent-subtle: var(--success-subtle);
+    --border-accent: var(--border-success);
+}
+
+body.failure {
+    --accent-primary: var(--failure-primary);
+    --accent-bright: var(--failure-bright);
+    --accent-dim: var(--failure-dim);
+    --accent-glow: var(--failure-glow);
+    --accent-subtle: var(--failure-subtle);
+    --border-accent: var(--border-failure);
+}
+
+/* Matrix rain canvas */
+#matrix-rain {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    opacity: 0.12;
+    pointer-events: none;
+}
+
+/* Ambient glow background */
+.bg-gradient {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, var(--accent-subtle) 0%, transparent 50%),
+        radial-gradient(ellipse 60% 40% at 100% 100%, var(--accent-subtle) 0%, transparent 50%),
+        radial-gradient(ellipse 60% 40% at 0% 100%, var(--accent-subtle) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* Main container */
+.container {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 40px 24px;
+    max-width: 700px;
+    width: 100%;
+    margin: auto 0;
+}
+
+/* Status icon */
+.status-icon {
+    margin-bottom: 24px;
+}
+
+.status-icon svg {
+    width: 80px;
+    height: 80px;
+    stroke-width: 1.5;
+    filter: drop-shadow(0 0 20px var(--accent-glow));
+}
+
+.icon-success {
+    color: var(--success-primary);
+    animation: icon-pulse-success 2s ease-in-out infinite;
+}
+
+.icon-failure {
+    color: var(--failure-primary);
+    animation: icon-pulse-failure 2s ease-in-out infinite;
+}
+
+@keyframes icon-pulse-success {
+    0%, 100% {
+        filter: drop-shadow(0 0 20px rgba(0, 255, 65, 0.5));
+        transform: scale(1);
+    }
+    50% {
+        filter: drop-shadow(0 0 30px rgba(0, 255, 65, 0.7));
+        transform: scale(1.02);
+    }
+}
+
+@keyframes icon-pulse-failure {
+    0%, 100% {
+        filter: drop-shadow(0 0 20px rgba(255, 68, 68, 0.5));
+        transform: scale(1);
+    }
+    50% {
+        filter: drop-shadow(0 0 30px rgba(255, 68, 68, 0.7));
+        transform: scale(1.02);
+    }
+}
+
+/* Status section */
+.status-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 32px;
+}
+
+.status-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 15px var(--accent-glow);
+}
+
+/* Status badge */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 18px;
+    border-radius: var(--radius-md);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.badge-success {
+    background: linear-gradient(135deg, rgba(0, 255, 65, 0.15), rgba(0, 255, 65, 0.05));
+    border: 1px solid var(--border-success);
+    color: var(--success-dim);
+}
+
+.badge-failure {
+    background: linear-gradient(135deg, rgba(255, 68, 68, 0.15), rgba(255, 68, 68, 0.05));
+    border: 1px solid var(--border-failure);
+    color: var(--failure-dim);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--accent-primary);
+    border-radius: 50%;
+    box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* Summary section */
+.summary-section {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.summary-card {
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-secondary));
+    border: 1px solid var(--border-accent);
+    border-radius: var(--radius-md);
+    padding: 16px 20px;
+    text-align: left;
+}
+
+.card-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--accent-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 8px;
+}
+
+.card-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1rem;
+    color: var(--text-white);
+}
+
+.task-text {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.metrics-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.metric-card .card-value {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+/* Result section */
+.result-section {
+    width: 100%;
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-secondary));
+    border: 1px solid var(--border-success);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(0, 255, 65, 0.05);
+    border-bottom: 1px solid var(--border-success);
+}
+
+.result-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--success-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+
+.copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--border-success);
+    border-radius: var(--radius-sm);
+    color: var(--success-dim);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.copy-btn:hover {
+    background: rgba(0, 255, 65, 0.1);
+    border-color: var(--success-primary);
+    color: var(--success-primary);
+}
+
+.copy-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.copy-btn.copied {
+    background: rgba(0, 255, 65, 0.2);
+    border-color: var(--success-primary);
+    color: var(--success-primary);
+}
+
+.result-content {
+    padding: 16px;
+    margin: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--text-white);
+    background: transparent;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    text-align: left;
+}
+
+/* Scrollbar styling for result */
+.result-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.result-content::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+.result-content::-webkit-scrollbar-thumb {
+    background: var(--success-dim);
+    border-radius: 3px;
+}
+
+.result-content::-webkit-scrollbar-thumb:hover {
+    background: var(--success-primary);
+}
+
+/* Error section */
+.error-section {
+    width: 100%;
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-secondary));
+    border: 1px solid var(--border-failure);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.error-header {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255, 68, 68, 0.05);
+    border-bottom: 1px solid var(--border-failure);
+}
+
+.error-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--failure-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+
+.error-content {
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--failure-bright);
+    background: transparent;
+    max-height: 200px;
+    overflow-y: auto;
+    text-align: left;
+    line-height: 1.5;
+}
+
+/* Footer */
+.footer {
+    position: fixed;
+    bottom: 24px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    z-index: 2;
+}
+
+.footer span:first-child {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .container {
+        padding: 32px 20px;
+    }
+    
+    .status-icon svg {
+        width: 64px;
+        height: 64px;
+    }
+    
+    .status-title {
+        font-size: 1.1rem;
+        letter-spacing: 1.5px;
+    }
+    
+    .metrics-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .footer {
+        flex-direction: column;
+        gap: 8px;
+        bottom: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    .status-icon svg {
+        width: 56px;
+        height: 56px;
+    }
+    
+    .status-title {
+        font-size: 1rem;
+    }
+    
+    .card-value {
+        font-size: 0.9rem;
+    }
+    
+    .result-content,
+    .error-content {
+        font-size: 0.8rem;
+        max-height: 200px;
+    }
+}
+
+/* Selection color */
+::selection {
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+}

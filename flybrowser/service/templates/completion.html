@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlyBrowser - Agent {{ "Completed" if success else "Failed" }}</title>
+    <!-- Marker for completion page detection -->
+    <meta name="flybrowser-completion" content="true">
+    <meta name="flybrowser-success" content="{{ 'true' if success else 'false' }}">
+    {% if inline_styles %}
+    <style>{{ css_content | safe }}</style>
+    {% else %}
+    <link rel="stylesheet" href="{{ static_url }}/css/completion.css">
+    {% endif %}
+</head>
+<body class="{{ 'success' if success else 'failure' }}">
+    <!-- Hidden marker element for page type detection -->
+    <div class="flybrowser-completion-page" data-flybrowser-completion="true" data-success="{{ 'true' if success else 'false' }}" style="display:none;">
+        FlyBrowser Completion Page - Agent Execution Finished
+    </div>
+    
+    <!-- Matrix rain canvas -->
+    <canvas id="matrix-rain"></canvas>
+    
+    <!-- Ambient glow background -->
+    <div class="bg-gradient"></div>
+    
+    <!-- Main content -->
+    <div class="container">
+        <!-- Status icon -->
+        <div class="status-icon">
+            {% if success %}
+            <svg class="icon-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            {% else %}
+            <svg class="icon-failure" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="15" y1="9" x2="9" y2="15"></line>
+                <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+            {% endif %}
+        </div>
+        
+        <!-- Status text -->
+        <div class="status-section">
+            <div class="status-title">
+                {% if success %}
+                Agent Completed Successfully
+                {% else %}
+                Agent Execution Failed
+                {% endif %}
+            </div>
+            <div class="status-badge {{ 'badge-success' if success else 'badge-failure' }}">
+                <div class="status-dot"></div>
+                <span>{{ "Success" if success else "Failed" }}</span>
+            </div>
+        </div>
+        
+        <!-- Task summary -->
+        <div class="summary-section">
+            <div class="summary-card task-card">
+                <div class="card-label">Task</div>
+                <div class="card-value task-text">{{ task }}</div>
+            </div>
+            
+            <div class="metrics-row">
+                <div class="summary-card metric-card">
+                    <div class="card-label">Duration</div>
+                    <div class="card-value">{{ duration_formatted }}</div>
+                </div>
+                <div class="summary-card metric-card">
+                    <div class="card-label">Iterations</div>
+                    <div class="card-value">{{ iterations }}{% if max_iterations %}/{{ max_iterations }}{% endif %}</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Result or Error section -->
+        {% if success and result_data %}
+        <div class="result-section">
+            <div class="result-header">
+                <span class="result-label">Result Data</span>
+                <button class="copy-btn" onclick="copyResult()" title="Copy to clipboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    <span class="copy-text">Copy</span>
+                </button>
+            </div>
+            <pre class="result-content" id="result-data">{{ result_data }}</pre>
+        </div>
+        {% elif not success and error_message %}
+        <div class="error-section">
+            <div class="error-header">
+                <span class="error-label">Error Details</span>
+            </div>
+            <div class="error-content">{{ error_message }}</div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Footer -->
+    <footer class="footer">
+        <span>Firefly Software Solutions Inc</span>
+        <span>Made with ❤️</span>
+        <span>Apache 2.0 License</span>
+    </footer>
+    
+    {% if inline_scripts %}
+    <script>{{ js_content | safe }}</script>
+    {% else %}
+    <script src="{{ static_url }}/js/completion.js"></script>
+    {% endif %}
+</body>
+</html>
