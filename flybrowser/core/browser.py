@@ -25,7 +25,7 @@ and provides a clean interface for browser operations.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
@@ -40,6 +40,15 @@ except ImportError:
     PROXY_ROTATION_AVAILABLE = False
     ProxyRotator = None
     ProxyConfig = None
+
+# Import fingerprint generation (optional)
+try:
+    from flybrowser.stealth.fingerprint import FingerprintGenerator, FingerprintProfile
+    FINGERPRINT_AVAILABLE = True
+except ImportError:
+    FINGERPRINT_AVAILABLE = False
+    FingerprintGenerator = None
+    FingerprintProfile = None
 
 
 class BrowserManager:
@@ -120,6 +129,8 @@ class BrowserManager:
         stealth: bool = True,
         user_agent: Optional[str] = None,
         proxy_rotator: Optional["ProxyRotator"] = None,
+        fingerprint: Optional["FingerprintProfile"] = None,
+        proxy: Optional[Dict[str, str]] = None,
         **launch_options: Any,
     ) -> None:
         """
@@ -137,10 +148,14 @@ class BrowserManager:
             user_agent: Custom user agent string. If None, uses a realistic default.
             proxy_rotator: Optional ProxyRotator for IP rotation.
                 If provided, will rotate proxies for each new context.
+            fingerprint: Optional FingerprintProfile for consistent browser identity.
+                If provided, overrides user_agent and uses profile values for context.
+            proxy: Direct proxy configuration dict for browser context.
+                Format: {"server": "http://...", "username": "...", "password": "..."}
+                Takes precedence over proxy_rotator.
             **launch_options: Additional Playwright launch options such as:
                 - args: List of command-line arguments
                 - downloads_path: Path for downloads
-                - proxy: Proxy configuration (if not using proxy_rotator)
                 - slow_mo: Slow down operations by specified milliseconds
 
         Example:
@@ -155,12 +170,24 @@ class BrowserManager:
             >>> proxies = [ProxyConfig(server="http://proxy1.com:8080")]
             >>> rotator = ProxyRotator(proxies)
             >>> manager = BrowserManager(proxy_rotator=rotator)
+            >>> 
+            >>> # With fingerprint profile
+            >>> from flybrowser.stealth.fingerprint import FingerprintGenerator
+            >>> gen = FingerprintGenerator()
+            >>> profile = gen.generate()
+            >>> manager = BrowserManager(fingerprint=profile)
         """
         self.headless = headless
         self.browser_type = browser_type
         self.stealth = stealth
-        self.user_agent = user_agent or self.DEFAULT_USER_AGENT
+        self.fingerprint = fingerprint
+        # Use fingerprint user agent if provided, else custom, else default
+        self.user_agent = (
+            fingerprint.user_agent if fingerprint 
+            else (user_agent or self.DEFAULT_USER_AGENT)
+        )
         self.proxy_rotator = proxy_rotator
+        self.proxy = proxy  # Direct proxy config (takes precedence over rotator)
         self.launch_options = launch_options
         self._playwright = None
         self._browser: Optional[Browser] = None
@@ -212,40 +239,75 @@ class BrowserManager:
                 headless=self.headless, **launch_opts
             )
 
-            # Get proxy if rotator is configured
-            if self.proxy_rotator:
+            # Get proxy configuration (direct proxy takes precedence over rotator)
+            proxy_config = None
+            if self.proxy:
+                # Direct proxy config provided (e.g., from ProxyNetwork)
+                proxy_config = self.proxy
+                logger.info(f"[PROXY] Using direct proxy: {self.proxy.get('server', 'unknown')}")
+            elif self.proxy_rotator:
+                # Legacy proxy rotator
                 self._current_proxy = self.proxy_rotator.get_next_proxy()
                 if self._current_proxy:
-                    logger.info(f"[PROXY] Using proxy: {self._current_proxy.server}")
+                    proxy_config = self._current_proxy.to_playwright_format()
+                    logger.info(f"[PROXY] Using rotator proxy: {self._current_proxy.server}")
             
-            # Create browser context with realistic settings
-            context_options = {
-                "viewport": {"width": 1920, "height": 1080},
-                "user_agent": self.user_agent,
-                # Realistic browser settings
-                "locale": "en-US",
-                "timezone_id": "America/New_York",
-                "color_scheme": "light",
-                "reduced_motion": "no-preference",
-                # Permissions that a real browser would have
-                "permissions": ["geolocation"],
-                # Device scale factor
-                "device_scale_factor": 1,
-                # Java/Flash disabled (like modern browsers)
-                "java_script_enabled": True,
-                "has_touch": False,
-                "is_mobile": False,
-            }
+            # Create browser context with settings from fingerprint or defaults
+            if self.fingerprint:
+                # Use fingerprint profile values
+                context_options = {
+                    "viewport": {
+                        "width": self.fingerprint.screen_width,
+                        "height": self.fingerprint.screen_height,
+                    },
+                    "user_agent": self.fingerprint.user_agent,
+                    "locale": self.fingerprint.language.split("-")[0] + "-" + self.fingerprint.language.split("-")[-1].upper() if "-" in self.fingerprint.language else "en-US",
+                    "timezone_id": self.fingerprint.timezone,
+                    "color_scheme": self.fingerprint.color_scheme,
+                    "reduced_motion": "no-preference",
+                    "permissions": ["geolocation"],
+                    "device_scale_factor": self.fingerprint.device_pixel_ratio,
+                    "java_script_enabled": True,
+                    "has_touch": self.fingerprint.touch_support,
+                    "is_mobile": self.fingerprint.is_mobile,
+                }
+                logger.info(f"[FINGERPRINT] Using profile: {self.fingerprint.os_type.value}/{self.fingerprint.browser_type.value}")
+            else:
+                # Use default realistic settings
+                context_options = {
+                    "viewport": {"width": 1920, "height": 1080},
+                    "user_agent": self.user_agent,
+                    # Realistic browser settings
+                    "locale": "en-US",
+                    "timezone_id": "America/New_York",
+                    "color_scheme": "light",
+                    "reduced_motion": "no-preference",
+                    # Permissions that a real browser would have
+                    "permissions": ["geolocation"],
+                    # Device scale factor
+                    "device_scale_factor": 1,
+                    # Java/Flash disabled (like modern browsers)
+                    "java_script_enabled": True,
+                    "has_touch": False,
+                    "is_mobile": False,
+                }
             
             # Add proxy to context if available
-            if self._current_proxy:
-                context_options["proxy"] = self._current_proxy.to_playwright_format()
+            if proxy_config:
+                context_options["proxy"] = proxy_config
             
             self._context = await self._browser.new_context(**context_options)
             
             # Inject stealth scripts to avoid detection
             if self.stealth:
-                await self._inject_stealth_scripts()
+                if self.fingerprint:
+                    # Use fingerprint-generated stealth script
+                    stealth_js = self.fingerprint.generate_stealth_script()
+                    await self._context.add_init_script(stealth_js)
+                    logger.debug("[FINGERPRINT] Injected fingerprint-based stealth scripts")
+                else:
+                    # Use default stealth scripts
+                    await self._inject_stealth_scripts()
 
             # Create initial page
             self._page = await self._context.new_page()
@@ -621,6 +683,11 @@ class BrowserManager:
         result_data: Optional[Any] = None,
         error_message: Optional[str] = None,
         max_iterations: Optional[int] = None,
+        llm_usage: Optional[Dict[str, Any]] = None,
+        tools_used: Optional[List[Dict[str, Any]]] = None,
+        reasoning_steps: Optional[List[Dict[str, Any]]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        error_traceback: Optional[str] = None,
     ) -> None:
         """
         Load the agent completion page with task results.
@@ -637,9 +704,21 @@ class BrowserManager:
             result_data: Optional result data (for successful extractions)
             error_message: Optional error message (for failures)
             max_iterations: Optional max iterations limit for display
+            llm_usage: Optional LLM usage statistics
+            tools_used: Optional list of tools executed
+            reasoning_steps: Optional list of reasoning steps
+            metadata: Optional additional metadata
+            error_traceback: Optional stack trace for errors
         """
+        # Ensure we have a valid page
+        if not self._page:
+            logger.warning("[COMPLETION] Cannot load completion page - no active page")
+            return
+        
         try:
             from flybrowser.service.template_renderer import render_completion_html
+            
+            logger.info(f"[COMPLETION] Loading completion page (success={success}, iterations={iterations})")
             
             # Render completion page with inline assets (no server required)
             html = render_completion_html(
@@ -651,15 +730,22 @@ class BrowserManager:
                 error_message=error_message,
                 max_iterations=max_iterations,
                 inline_assets=True,
+                llm_usage=llm_usage,
+                tools_used=tools_used,
+                reasoning_steps=reasoning_steps,
+                metadata=metadata,
+                error_traceback=error_traceback,
             )
             
             # Inject the HTML directly into the page
             await self._page.set_content(html, wait_until="domcontentloaded")
             
-            logger.debug(f"Agent completion page loaded (success={success})")
+            logger.info(f"[COMPLETION] Agent completion page loaded successfully")
         except Exception as e:
-            # If loading fails, log but don't fail the overall operation
-            logger.debug(f"Could not load completion page: {e}")
+            # Log error at warning level so it's visible
+            logger.warning(f"[COMPLETION] Could not load completion page: {e}")
+            import traceback
+            logger.debug(f"[COMPLETION] Traceback: {traceback.format_exc()}")
 
     async def stop(self) -> None:
         """
