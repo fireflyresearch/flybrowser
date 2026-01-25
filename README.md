@@ -104,8 +104,9 @@ FlyBrowser provides high-level operations that work identically across embedded,
 
 ```python
 from flybrowser import FlyBrowser
+import os
 
-async with FlyBrowser(llm_provider="openai", api_key="sk-...") as browser:
+async with FlyBrowser(llm_provider="openai", api_key=os.getenv("OPENAI_API_KEY")) as browser:
     # Direct navigation
     await browser.goto("https://shop.example.com")
     
@@ -156,13 +157,15 @@ cd flybrowser
 
 ### Your First Automation
 
+> **See full example:** [`examples/basic/quickstart.py`](examples/basic/quickstart.py)
+
 ```python
 from flybrowser import FlyBrowser
+import os
 
-async with FlyBrowser(llm_provider="openai", api_key="sk-...") as browser:
+async with FlyBrowser(llm_provider="openai", api_key=os.getenv("OPENAI_API_KEY")) as browser:
     # Navigate and interact naturally
     await browser.goto("https://news.ycombinator.com")
-    await browser.act("click the login link")
     
     # Extract structured data
     posts = await browser.extract("Get the top 5 post titles and scores")
@@ -188,6 +191,8 @@ jupyter notebook
 ## Streaming & Recording
 
 Stream browser sessions in real-time or record for later playback:
+
+> **See full examples:** [`examples/streaming/basic_streaming.py`](examples/streaming/basic_streaming.py), [`examples/streaming/rtmp_streaming.py`](examples/streaming/rtmp_streaming.py), [`examples/streaming/recording.py`](examples/streaming/recording.py)
 
 ```python
 # Start live HLS stream
@@ -533,6 +538,8 @@ flybrowser serve --port 8000
 # Connect from clients
 ```
 ```python
+import os
+
 async with FlyBrowser(endpoint="http://localhost:8000") as browser:
     # Same API, server handles browser sessions
     await browser.goto("https://example.com")
@@ -598,10 +605,14 @@ await browser.act("type john@example.com in email field")
 The most powerful feature of FlyBrowser - give it a complex goal and watch it figure out how to accomplish it:
 
 ### Form Automation
+
+> **See full example:** [`examples/workflows/job_application.py`](examples/workflows/job_application.py)
+
 ```python
 from flybrowser import FlyBrowser
+import os
 
-async with FlyBrowser(llm_provider="openai", api_key="sk-...") as browser:
+async with FlyBrowser(llm_provider="openai", api_key=os.getenv("OPENAI_API_KEY")) as browser:
     await browser.goto("https://jobs.example.com/apply")
     
     result = await browser.agent(
@@ -626,6 +637,9 @@ async with FlyBrowser(llm_provider="openai", api_key="sk-...") as browser:
 ```
 
 ### Multi-Step Booking
+
+> **See full example:** [`examples/workflows/booking.py`](examples/workflows/booking.py)
+
 ```python
 # Book a restaurant reservation
 await browser.goto("https://opentable.com")
@@ -650,6 +664,9 @@ print(f"LLM Cost: ${result.llm_usage.cost_usd:.4f}")
 ```
 
 ### Research & Data Gathering
+
+> **See full example:** [`examples/workflows/research.py`](examples/workflows/research.py)
+
 ```python
 # Research competitors and extract insights
 await browser.goto("https://google.com")
@@ -669,11 +686,15 @@ result.pprint()  # Shows execution summary, LLM usage, costs
 ## Use Cases
 
 ### Web Scraping
+
+> **See examples:** [`examples/scraping/hackernews.py`](examples/scraping/hackernews.py), [`examples/scraping/product_extraction.py`](examples/scraping/product_extraction.py)
+
 ```python
 # Extract structured data with schema validation
 from flybrowser import FlyBrowser
+import os
 
-async with FlyBrowser(llm_provider="openai", api_key="sk-...") as browser:
+async with FlyBrowser(llm_provider="openai", api_key=os.getenv("OPENAI_API_KEY")) as browser:
     await browser.goto("https://shop.example.com/products")
     
     # Extract with optional schema
@@ -726,6 +747,9 @@ await browser.monitor("check if price drops below $50")
 ```
 
 ### Content Recording
+
+> **See example:** [`examples/streaming/recording.py`](examples/streaming/recording.py)
+
 ```python
 # Record tutorials, demos, or evidence
 await browser.start_recording(codec="h265", quality="high")
@@ -734,6 +758,9 @@ recording = await browser.stop_recording()
 ```
 
 ### Live Streaming
+
+> **See examples:** [`examples/streaming/basic_streaming.py`](examples/streaming/basic_streaming.py), [`examples/streaming/rtmp_streaming.py`](examples/streaming/rtmp_streaming.py)
+
 ```python
 # Stream to platforms or save for later
 stream = await browser.start_stream(
