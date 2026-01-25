@@ -22,7 +22,7 @@ Supports both inline (embedded mode) and external (server mode) asset serving.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -79,6 +79,69 @@ class TemplateRenderer:
         """Clear the static file cache."""
         self._static_cache.clear()
     
+    def _validate_list(self, items: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """Validate and ensure a list is never None.
+        
+        Args:
+            items: Optional list of dictionaries
+            
+        Returns:
+            A valid list (empty list if input was None or invalid)
+        """
+        if items is None:
+            return []
+        if not isinstance(items, list):
+            return []
+        # Filter out None items and ensure each item is a dict
+        return [item for item in items if item is not None and isinstance(item, dict)]
+    
+    def _validate_llm_usage(self, llm_usage: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate and ensure llm_usage has all required fields.
+        
+        Args:
+            llm_usage: Optional LLM usage dictionary
+            
+        Returns:
+            Validated llm_usage dict or None if input was invalid
+        """
+        if llm_usage is None:
+            return None
+        if not isinstance(llm_usage, dict):
+            return None
+        
+        # Ensure all expected fields have safe defaults
+        return {
+            "model": str(llm_usage.get("model", "unknown") or "unknown"),
+            "provider": str(llm_usage.get("provider", "unknown") or "unknown"),
+            "prompt_tokens": int(llm_usage.get("prompt_tokens", 0) or 0),
+            "completion_tokens": int(llm_usage.get("completion_tokens", 0) or 0),
+            "total_tokens": int(llm_usage.get("total_tokens", 0) or 0),
+            "cost_usd": float(llm_usage.get("cost_usd", 0.0) or 0.0),
+            "request_count": int(llm_usage.get("request_count", llm_usage.get("calls_count", 1)) or 1),
+            "avg_latency_ms": float(llm_usage.get("avg_latency_ms", 0.0) or 0.0),
+        }
+    
+    def _validate_metadata(self, metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate and ensure metadata has all required fields.
+        
+        Args:
+            metadata: Optional metadata dictionary
+            
+        Returns:
+            Validated metadata dict or None if input was invalid
+        """
+        if metadata is None:
+            return None
+        if not isinstance(metadata, dict):
+            return None
+        
+        # Ensure all expected fields have safe defaults
+        return {
+            "session_id": str(metadata.get("session_id", "N/A") or "N/A"),
+            "reasoning_strategy": str(metadata.get("reasoning_strategy", metadata.get("strategy", "standard")) or "standard"),
+            "stop_reason": str(metadata.get("stop_reason", "completed") or "completed"),
+        }
+    
     def render_blank(
         self,
         static_url: Optional[str] = None,
@@ -116,11 +179,16 @@ class TemplateRenderer:
         task: str,
         duration_ms: float,
         iterations: int,
-        result_data: Optional[str] = None,
+        result_data: Optional[Any] = None,
         error_message: Optional[str] = None,
         max_iterations: Optional[int] = None,
         static_url: Optional[str] = None,
         inline_assets: bool = False,
+        llm_usage: Optional[Dict[str, Any]] = None,
+        tools_used: Optional[List[Dict[str, Any]]] = None,
+        reasoning_steps: Optional[List[Dict[str, Any]]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        error_traceback: Optional[str] = None,
     ) -> str:
         """Render the agent completion page template.
         
@@ -134,6 +202,11 @@ class TemplateRenderer:
             max_iterations: Optional max iterations limit for display
             static_url: Base URL for static assets (server mode)
             inline_assets: Whether to inline CSS/JS (embedded mode)
+            llm_usage: Optional LLM usage statistics
+            tools_used: Optional list of tools executed
+            reasoning_steps: Optional list of reasoning steps
+            metadata: Optional additional metadata
+            error_traceback: Optional stack trace for errors
             
         Returns:
             Rendered HTML string
@@ -141,6 +214,17 @@ class TemplateRenderer:
         import json
         
         template = self.env.get_template("completion.html")
+        
+        # Validate and transform inputs to ensure template safety
+        # Ensure lists are never None (use empty list instead)
+        tools_used = self._validate_list(tools_used)
+        reasoning_steps = self._validate_list(reasoning_steps)
+        
+        # Ensure llm_usage has all required fields if provided
+        llm_usage = self._validate_llm_usage(llm_usage)
+        
+        # Ensure metadata has all required fields if provided
+        metadata = self._validate_metadata(metadata)
         
         # Format duration for display
         if duration_ms < 1000:
@@ -154,14 +238,23 @@ class TemplateRenderer:
         
         # Format result data as JSON if it's a dict/list
         formatted_result = None
+        result_data_json = None
         if result_data is not None:
             if isinstance(result_data, (dict, list)):
                 try:
                     formatted_result = json.dumps(result_data, indent=2, ensure_ascii=False)
+                    result_data_json = json.dumps(result_data, ensure_ascii=False)
                 except (TypeError, ValueError):
                     formatted_result = str(result_data)
+                    result_data_json = json.dumps(str(result_data))
             else:
                 formatted_result = str(result_data)
+                # Try to parse as JSON for tree view
+                try:
+                    parsed = json.loads(str(result_data))
+                    result_data_json = json.dumps(parsed, ensure_ascii=False)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    result_data_json = json.dumps(str(result_data))
         
         context: Dict[str, Any] = {
             "success": success,
@@ -170,9 +263,15 @@ class TemplateRenderer:
             "iterations": iterations,
             "max_iterations": max_iterations,
             "result_data": formatted_result,
+            "result_data_json": result_data_json,
             "error_message": error_message,
+            "error_traceback": error_traceback,
             "inline_styles": inline_assets,
             "inline_scripts": inline_assets,
+            "llm_usage": llm_usage,
+            "tools_used": tools_used,
+            "reasoning_steps": reasoning_steps,
+            "metadata": metadata,
         }
         
         if inline_assets:
@@ -306,11 +405,16 @@ def render_completion_html(
     task: str,
     duration_ms: float,
     iterations: int,
-    result_data: Optional[str] = None,
+    result_data: Optional[Any] = None,
     error_message: Optional[str] = None,
     max_iterations: Optional[int] = None,
     static_url: Optional[str] = None,
     inline_assets: bool = False,
+    llm_usage: Optional[Dict[str, Any]] = None,
+    tools_used: Optional[List[Dict[str, Any]]] = None,
+    reasoning_steps: Optional[List[Dict[str, Any]]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    error_traceback: Optional[str] = None,
 ) -> str:
     """Convenience function to render agent completion page HTML.
     
@@ -324,6 +428,11 @@ def render_completion_html(
         max_iterations: Optional max iterations limit for display
         static_url: Base URL for static assets (server mode)
         inline_assets: Whether to inline CSS/JS (embedded mode)
+        llm_usage: Optional LLM usage statistics
+        tools_used: Optional list of tools executed
+        reasoning_steps: Optional list of reasoning steps
+        metadata: Optional additional metadata
+        error_traceback: Optional stack trace for errors
         
     Returns:
         Rendered HTML string
@@ -339,6 +448,11 @@ def render_completion_html(
         max_iterations=max_iterations,
         static_url=static_url,
         inline_assets=inline_assets,
+        llm_usage=llm_usage,
+        tools_used=tools_used,
+        reasoning_steps=reasoning_steps,
+        metadata=metadata,
+        error_traceback=error_traceback,
     )
 
 
