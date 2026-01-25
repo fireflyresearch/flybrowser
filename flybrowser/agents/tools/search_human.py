@@ -33,7 +33,6 @@ Usage:
 """
 
 import asyncio
-import json
 import logging
 import random
 import time
@@ -49,9 +48,7 @@ from .search_utils import (
     clean_snippet,
     is_valid_url,
 )
-from flybrowser.agents.obstacle_detector import ObstacleDetector
-from flybrowser.agents.structured_llm import StructuredLLMWrapper
-from flybrowser.agents.schemas import OBSTACLE_DETECTION_SCHEMA
+from .navigation import NavigateTool
 from flybrowser.prompts import PromptManager
 
 if TYPE_CHECKING:
@@ -129,43 +126,26 @@ class SearchEngineAdapter:
     """
     Adapters for different search engines.
     
-    Provides selectors and URLs for Google, DuckDuckGo, and Bing.
+    Only provides URLs - element detection is done via LLM/VLM.
     """
     
     ENGINES = {
         SearchEngine.GOOGLE: {
             "url": "https://www.google.com",
-            "input_selector": "textarea[name='q'], input[name='q']",
-            "button_selector": "input[type='submit'][name='btnK'], button[type='submit']",
-            "result_selector": "div.g, div[data-sokoban-container]",
-            "title_selector": "h3",
-            "link_selector": "a",
-            "snippet_selector": "div[data-content-feature='1'], div.VwiC3b",
         },
         SearchEngine.DUCKDUCKGO: {
             "url": "https://duckduckgo.com",
-            "input_selector": "input[name='q']",
-            "button_selector": "button[type='submit']",
-            "result_selector": "article[data-testid='result'], li[data-layout='organic']",
-            "title_selector": "h2, [data-testid='result-title-a']",
-            "link_selector": "a[data-testid='result-title-a'], h2 a",
-            "snippet_selector": "[data-testid='result-snippet'], .result__snippet",
         },
         SearchEngine.BING: {
             "url": "https://www.bing.com",
-            "input_selector": "input#sb_form_q",
-            "button_selector": "input#sb_form_go",
-            "result_selector": "li.b_algo",
-            "title_selector": "h2",
-            "link_selector": "a",
-            "snippet_selector": "p, .b_caption p",
         },
     }
     
     @classmethod
-    def get_config(cls, engine: SearchEngine) -> Dict[str, str]:
-        """Get configuration for a search engine."""
-        return cls.ENGINES.get(engine, cls.ENGINES[SearchEngine.DUCKDUCKGO])
+    def get_url(cls, engine: SearchEngine) -> str:
+        """Get URL for a search engine."""
+        config = cls.ENGINES.get(engine, cls.ENGINES[SearchEngine.DUCKDUCKGO])
+        return config["url"]
 
 
 class SearchHumanTool(BaseTool):
@@ -181,6 +161,7 @@ class SearchHumanTool(BaseTool):
         super().__init__(page_controller)
         self.behavior = HumanBehaviorSimulator()
         self.prompt_manager = PromptManager()
+        self._navigate_tool: Optional[NavigateTool] = None
     
     @property
     def metadata(self) -> ToolMetadata:
@@ -188,11 +169,10 @@ class SearchHumanTool(BaseTool):
         return ToolMetadata(
             name="search_human",
             description=(
-                "Perform web search to FIND websites or information you don't know the URL for. "
-                "Uses browser automation with natural typing and mouse movements. "
-                "IMPORTANT: Do NOT use this if you're already on the target website - instead use 'get_page_state', 'extract_text', and 'navigate' to explore the site directly. "
-                "Only use search when you need to discover URLs or gather information from multiple sources. "
-                "No API keys required."
+                "FALLBACK browser-based search - Only use if 'search' tool is unavailable or fails. "
+                "Slower (2-5 seconds) but works without API keys. "
+                "Uses human-like browser automation (typing, mouse movements). "
+                "Prefer 'search' tool for faster API-based search when available."
             ),
             parameters=[
                 ToolParameter(
@@ -227,13 +207,14 @@ class SearchHumanTool(BaseTool):
         **kwargs
     ) -> ToolResult:
         """
-        Execute human-like search.
+        Execute human-like search using LLM/VLM for element detection.
         
-        This uses the autonomous planning system to create a structured plan:
-        1. Navigate to search engine
-        2. Enter query with human-like typing
-        3. Click search button
-        4. Extract results
+        Uses intelligent element detection instead of hardcoded selectors:
+        1. Navigate to search engine (with obstacle handling)
+        2. Find search input using LLM/VLM
+        3. Enter query with human-like typing
+        4. Submit search (Enter key or button click)
+        5. Extract results using LLM/VLM
         
         Args:
             query: Search query
@@ -255,43 +236,31 @@ class SearchHumanTool(BaseTool):
             except ValueError:
                 search_engine = SearchEngine.DUCKDUCKGO
             
-            # Get engine configuration
-            config = SearchEngineAdapter.get_config(search_engine)
+            # Get engine URL
+            engine_url = SearchEngineAdapter.get_url(search_engine)
             
             logger.info(f"Starting human-like search: '{query}' on {search_engine.value}")
             
-            # Phase 1: Navigate to search engine
-            await self._navigate_to_engine(config["url"])
+            # Phase 1: Navigate to search engine (NavigateTool handles obstacles)
+            await self._navigate_to_engine(engine_url)
             
-            # Phase 2: Enter query
-            await self._enter_query_human_like(query, config["input_selector"])
+            # Phase 2: Find and fill search input using LLM
+            await self._enter_query_with_llm(query)
             
-            # Phase 3: Click search
-            await self._click_search_button(config["button_selector"])
+            # Phase 3: Submit search (press Enter - most reliable)
+            await self._submit_search()
             
-            # Phase 4: Wait for results (with bot detection)
-            try:
-                await self._wait_for_results(config["result_selector"])
-            except Exception as wait_error:
-                # Check if we hit bot detection during wait
-                current_url = await self.page.get_url()
-                if '/sorry/' in current_url or 'captcha' in current_url.lower():
-                    logger.warning(f"  Bot detection during results wait: {current_url}")
-                    # Trigger adaptive retry
-                    return await self._handle_bot_detection_retry(query, config, max_results, search_engine, start_time)
-                else:
-                    # Different error - re-raise
-                    raise
+            # Phase 4: Wait for results page to load
+            await self._wait_for_results_page()
             
-            # Phase 5: Extract results
-            results = await self._extract_results(config, max_results)
-            
-            # Get current URL to check for issues
+            # Check for bot detection
             current_url = await self.page.get_url()
-            
-            # Check if we hit bot detection after extraction
             if '/sorry/' in current_url or 'captcha' in current_url.lower():
-                return await self._handle_bot_detection_retry(query, config, max_results, search_engine, start_time)
+                logger.warning(f"Bot detection detected: {current_url}")
+                return await self._handle_bot_detection_retry(query, engine_url, max_results, search_engine, start_time)
+            
+            # Phase 5: Extract results using LLM
+            results = await self._extract_results_with_llm(max_results)
             
             # Create response
             elapsed_ms = (time.time() - start_time) * 1000
@@ -305,6 +274,7 @@ class SearchHumanTool(BaseTool):
                 metadata={
                     "engine": search_engine.value,
                     "human_simulation": True,
+                    "llm_detection": True,
                     "final_url": current_url,
                 },
             )
@@ -336,323 +306,445 @@ class SearchHumanTool(BaseTool):
                 error_code="EXECUTION_ERROR",
             )
     
+    def _get_navigate_tool(self) -> NavigateTool:
+        """Get or create NavigateTool instance for navigation with obstacle handling."""
+        if self._navigate_tool is None:
+            self._navigate_tool = NavigateTool(self.page)
+            # Pass through injected LLM and config from ReActAgent
+            self._navigate_tool.llm_provider = getattr(self, 'llm_provider', None)
+            self._navigate_tool.agent_config = getattr(self, 'agent_config', None)
+        return self._navigate_tool
+    
     async def _navigate_to_engine(self, url: str) -> None:
-        """Navigate to search engine homepage."""
+        """Navigate to search engine homepage using NavigateTool.
+        
+        Uses NavigateTool which handles obstacle detection (cookie banners, etc.)
+        through the framework's ObstacleDetector.
+        """
         logger.info(f"Navigating to {url}")
         
         if not self.page:
             raise RuntimeError("Page controller not available")
         
-        await self.page.goto(url)
+        # Use NavigateTool for navigation - it handles obstacle detection
+        navigate_tool = self._get_navigate_tool()
+        result = await navigate_tool.execute(url=url)
         
-        # Check for and handle obstacles using new detector
-        llm = getattr(self, 'llm_provider', None)
-        if llm:
-            # Get config from agent if available
-            agent_config = getattr(self, 'agent_config', None)
-            obstacle_config = agent_config.obstacle_detector if agent_config else None
-            
-            detector = ObstacleDetector(
-                page=self.page.page,
-                llm=llm,
-                config=obstacle_config
-            )
-            await detector.detect_and_handle()
+        if not result.success:
+            raise RuntimeError(f"Navigation failed: {result.error}")
         
         # Think delay (simulate reading page)
         await asyncio.sleep(self.behavior.think_delay())
     
-    async def _handle_obstacles(self) -> None:
+    async def _enter_query_with_llm(self, query: str) -> None:
         """
-        Intelligently detect and handle obstacles using LLM/VLM.
+        Find search input using Playwright's intelligent locators and enter query.
         
-        Uses rich context including page state, focused elements, modals,
-        and visual analysis to identify blocking elements.
+        Uses Playwright's role-based and semantic locators which are more reliable
+        than CSS selectors, especially for modern sites like Google that use
+        textarea elements or complex DOM structures.
         """
-        if not self.page:
-            return
-        
-        logger.info("Checking for obstacles using LLM detection...")
-        
-        try:
-            # Get LLM from tool context (passed from agent)
-            llm = getattr(self, 'llm_provider', None)
-            if not llm:
-                logger.warning("LLM not available for obstacle detection, skipping")
-                return
-            
-            # Capture rich page state
-            rich_state = await self.page.get_rich_state()
-            focused = await self.page.get_focused_element()
-            
-            # Get page HTML structure (visible elements only)
-            html_structure = await self.page.evaluate("""
-                () => {
-                    // Get all visible elements with high z-index (likely overlays)
-                    const elements = Array.from(document.querySelectorAll('*'));
-                    const overlays = elements
-                        .filter(el => {
-                            const style = window.getComputedStyle(el);
-                            const zIndex = parseInt(style.zIndex) || 0;
-                            const display = style.display;
-                            const visibility = style.visibility;
-                            const opacity = parseFloat(style.opacity) || 1;
-                            
-                            return zIndex > 100 && 
-                                   display !== 'none' && 
-                                   visibility !== 'hidden' && 
-                                   opacity > 0.1;
-                        })
-                        .map(el => ({
-                            tag: el.tagName.toLowerCase(),
-                            id: el.id || null,
-                            classes: Array.from(el.classList),
-                            role: el.getAttribute('role'),
-                            ariaModal: el.getAttribute('aria-modal'),
-                            zIndex: parseInt(window.getComputedStyle(el).zIndex) || 0,
-                            text: el.innerText?.slice(0, 200),
-                            rect: el.getBoundingClientRect()
-                        }));
-                    
-                    // Get modal indicators
-                    const modals = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .modal.show');
-                    
-                    return {
-                        overlays: overlays.slice(0, 10),
-                        hasModals: modals.length > 0,
-                        modalCount: modals.length
-                    };
-                }
-            """)
-            
-            # Check if there's likely an obstacle
-            has_modals = rich_state.get('hasModals', False) or html_structure.get('hasModals', False)
-            has_overlays = len(html_structure.get('overlays', [])) > 0
-            
-            if not has_modals and not has_overlays:
-                logger.debug("No modal or overlay elements detected")
-                return
-            
-            # Build rich context for LLM
-            current_url = await self.page.get_url()
-            context = {
-                'url': current_url,
-                'title': rich_state.get('title', ''),
-                'has_modals': has_modals,
-                'modal_count': html_structure.get('modalCount', 0),
-                'overlay_count': len(html_structure.get('overlays', [])),
-                'overlays': json.dumps(html_structure.get('overlays', []), indent=2),
-                'focused_element': json.dumps(focused, indent=2) if focused else 'None',
-                'scroll_position': rich_state.get('scrollPosition', {}),
-                'viewport': rich_state.get('viewport', {}),
-            }
-            
-            # Get prompt from template manager
-            prompts = self.prompt_manager.get_prompt(
-                "obstacle_detection",
-                **context
-            )
-            
-            # Use StructuredLLMWrapper for reliable JSON output with repair
-            wrapper = StructuredLLMWrapper(
-                llm_provider=llm,
-                max_repair_attempts=2,
-                repair_temperature=0.1,
-            )
-            
-            # Get LLM analysis with structured output
-            # Use configured temperature or default to 0.2
-            agent_config = getattr(self, 'agent_config', None)
-            if agent_config and hasattr(agent_config, 'obstacle_detection_temperature'):
-                temp_value = agent_config.obstacle_detection_temperature
-            else:
-                temp_value = 0.2  # Fallback default
-            
-            try:
-                analysis = await wrapper.generate_structured(
-                    prompt=prompts["user"],
-                    schema=OBSTACLE_DETECTION_SCHEMA,
-                    system_prompt=prompts["system"],
-                    temperature=temp_value,
-                )
-            except ValueError as e:
-                # Structured output validation failed after repair attempts
-                logger.warning(f"Obstacle detection structured output failed: {e}")
-                return
-            
-            # Check if blocking (using new schema format: is_blocking)
-            if not analysis.get('is_blocking', False):
-                logger.debug("No blocking obstacles detected")
-                return
-            
-            logger.info(f"LLM detected {len(analysis.get('obstacles', []))} blocking obstacle(s)")
-            
-            # Handle detected obstacles
-            obstacles_handled = 0
-            for obstacle in analysis.get('obstacles', [])[:3]:  # Max 3
-                try:
-                    confidence = obstacle.get('confidence', 0)
-                    if confidence < 0.65:
-                        logger.debug(f"Skipping low confidence obstacle: {confidence}")
-                        continue
-                    
-                    description = obstacle.get('description', obstacle.get('type', 'Unknown'))
-                    # Use new schema format: strategies (not selectors)
-                    strategies = obstacle.get('strategies', [])
-                    
-                    if not strategies:
-                        logger.warning(f"No strategies provided for: {description}")
-                        continue
-                    
-                    logger.info(f"Attempting to dismiss: {description} (confidence: {confidence})")
-                    logger.debug(f"Trying {len(strategies)} dismissal strategies")
-                    
-                    # Try each strategy in priority order
-                    clicked = False
-                    for i, strategy in enumerate(sorted(strategies, key=lambda x: x.get('priority', 99)), 1):
-                        try:
-                            strategy_type = strategy.get('type', '')
-                            strategy_value = strategy.get('value', '')
-                            
-                            logger.debug(f"  Strategy {i}: {strategy_type}={strategy_value}")
-                            
-                            # Execute based on strategy type
-                            if strategy_type == 'click_text':
-                                locator = self.page.page.get_by_text(strategy_value, exact=False).first
-                            elif strategy_type == 'click_button':
-                                locator = self.page.page.get_by_role("button", name=strategy_value).first
-                            elif strategy_type == 'click_selector':
-                                locator = self.page.page.locator(strategy_value).first
-                            elif strategy_type == 'press_key':
-                                await self.page.press_key(strategy_value)
-                                logger.info(f"[ok] Dismissed: {description} (pressed key: {strategy_value})")
-                                clicked = True
-                                obstacles_handled += 1
-                                await asyncio.sleep(0.5)
-                                break
-                            elif strategy_type == 'click_outside':
-                                # Click at document body to dismiss
-                                await self.page.page.locator("body").click(position={"x": 10, "y": 10})
-                                logger.info(f"[ok] Dismissed: {description} (clicked outside)")
-                                clicked = True
-                                obstacles_handled += 1
-                                await asyncio.sleep(0.5)
-                                break
-                            elif strategy_type == 'scroll_away':
-                                await self.page.page.evaluate("window.scrollBy(0, 500)")
-                                logger.info(f"[ok] Dismissed: {description} (scrolled away)")
-                                clicked = True
-                                obstacles_handled += 1
-                                await asyncio.sleep(0.5)
-                                break
-                            else:
-                                logger.debug(f"  Unknown strategy type: {strategy_type}")
-                                continue
-                            
-                            # For click strategies, check if visible before clicking
-                            if await locator.is_visible(timeout=1000):
-                                await locator.click(timeout=2000)
-                                logger.info(f"[ok] Dismissed: {description} (using {strategy_type}: {strategy_value})")
-                                clicked = True
-                                obstacles_handled += 1
-                                await asyncio.sleep(0.5)
-                                break
-                            else:
-                                logger.debug(f"  Element not visible: {strategy_type}={strategy_value}")
-                        
-                        except Exception as e:
-                            logger.debug(f"  Strategy {i} failed: {e}")
-                            continue
-                    
-                    if not clicked:
-                        logger.warning(f"[fail] Could not dismiss: {description} (all {len(strategies)} strategies failed)")
-                    
-                except Exception as e:
-                    logger.warning(f"Error processing obstacle '{description}': {e}")
-                    continue
-            
-            if obstacles_handled > 0:
-                logger.info(f"Successfully handled {obstacles_handled} obstacle(s)")
-                # Wait for page to settle
-                await asyncio.sleep(1.0)
-            else:
-                logger.debug("No obstacles could be dismissed")
-        
-        except Exception as e:
-            logger.warning(f"Obstacle detection failed: {e}")
-            # Continue anyway - obstacles are optional
-    
-    async def _enter_query_human_like(self, query: str, selector: str) -> None:
-        """
-        Enter query with human-like typing.
-        
-        Simulates:
-        - Natural typing speed (80-120 WPM)
-        - Pauses between words
-        - Character-by-character typing
-        
-        Args:
-            query: Query to type
-            selector: Input field selector
-        """
-        logger.info(f"Typing query: {query}")
+        logger.info(f"Finding search input and typing query: {query}")
         
         if not self.page:
             raise RuntimeError("Page controller not available")
         
-        # Wait for input field
-        await self.page.wait_for_selector(selector, timeout=10000)
+        # Try multiple strategies to find the search input, prioritizing Playwright's
+        # intelligent locators over CSS selectors
+        search_input = None
         
-        # Click input field
-        await self.page.click_and_track(selector)
-        await asyncio.sleep(self.behavior.click_delay())
+        # Strategy 1: Use Playwright's get_by_role for search/combobox
+        # Modern search engines use role="combobox" or role="searchbox"
+        try:
+            # Google uses role="combobox" for their search textarea
+            combobox = self.page.page.get_by_role("combobox")
+            if await combobox.count() > 0:
+                search_input = combobox.first
+                logger.info("Found search input via role='combobox'")
+        except Exception as e:
+            logger.debug(f"Role combobox not found: {e}")
         
-        # Type character by character with human-like delays
-        words = query.split()
-        for i, word in enumerate(words):
-            for char in word:
-                # Get delay in seconds, convert to milliseconds for type_text
-                delay_seconds = self.behavior.typing_delay()
-                await self.page.type_text(char, delay=int(delay_seconds * 1000))
-            
-            # Add space between words (except last word)
-            if i < len(words) - 1:
-                await self.page.type_text(" ", delay=int(self.behavior.word_pause() * 1000))
+        # Strategy 2: Try searchbox role
+        if not search_input:
+            try:
+                searchbox = self.page.page.get_by_role("searchbox")
+                if await searchbox.count() > 0:
+                    search_input = searchbox.first
+                    logger.info("Found search input via role='searchbox'")
+            except Exception as e:
+                logger.debug(f"Role searchbox not found: {e}")
+        
+        # Strategy 3: Use Playwright's get_by_placeholder for common search placeholders
+        if not search_input:
+            for placeholder in ["Search", "Buscar", "Buscar en Google", "Search Google"]:
+                try:
+                    by_placeholder = self.page.page.get_by_placeholder(placeholder, exact=False)
+                    if await by_placeholder.count() > 0:
+                        search_input = by_placeholder.first
+                        logger.info(f"Found search input via placeholder='{placeholder}'")
+                        break
+                except Exception:
+                    continue
+        
+        # Strategy 4: Try textarea elements (Google's modern search)
+        if not search_input:
+            try:
+                # Google uses <textarea> for their search input
+                textarea = self.page.page.locator("textarea[name='q'], textarea[title*='Search'], textarea[title*='Buscar']")
+                if await textarea.count() > 0:
+                    search_input = textarea.first
+                    logger.info("Found search input via textarea selector")
+            except Exception as e:
+                logger.debug(f"Textarea selector not found: {e}")
+        
+        # Strategy 5: Fall back to traditional input selectors
+        if not search_input:
+            try:
+                traditional = self.page.page.locator("input[name='q'], input[type='search'], input[type='text'][aria-label*='earch']")
+                if await traditional.count() > 0:
+                    search_input = traditional.first
+                    logger.info("Found search input via traditional CSS selector")
+            except Exception as e:
+                logger.debug(f"Traditional selector not found: {e}")
+        
+        # Strategy 6: Use LLM with ACTUAL HTML content as last resort
+        if not search_input:
+            llm = getattr(self, 'llm_provider', None)
+            if llm:
+                try:
+                    from flybrowser.agents.structured_llm import StructuredLLMWrapper
+                    wrapper = StructuredLLMWrapper(llm, max_repair_attempts=2)
+                    
+                    # Get ACTUAL HTML of input/textarea elements - this is what the LLM needs!
+                    input_elements_html = await self.page.page.evaluate("""
+                        () => {
+                            const elements = [];
+                            // Get all potential search inputs
+                            document.querySelectorAll('input, textarea').forEach((el, idx) => {
+                                if (idx < 15) {  // Limit for token efficiency
+                                    const rect = el.getBoundingClientRect();
+                                    // Only include visible elements
+                                    if (rect.width > 0 && rect.height > 0) {
+                                        // Get outerHTML but limit length
+                                        let html = el.outerHTML;
+                                        if (html.length > 500) html = html.substring(0, 500) + '...';
+                                        elements.push({
+                                            html: html,
+                                            tagName: el.tagName.toLowerCase(),
+                                            type: el.type || null,
+                                            name: el.name || null,
+                                            id: el.id || null,
+                                            placeholder: el.placeholder || null,
+                                            ariaLabel: el.getAttribute('aria-label') || null,
+                                            role: el.getAttribute('role') || null,
+                                            title: el.title || null,
+                                            isVisible: rect.top >= 0 && rect.top <= window.innerHeight,
+                                            position: { x: Math.round(rect.x), y: Math.round(rect.y) }
+                                        });
+                                    }
+                                }
+                            });
+                            return elements;
+                        }
+                    """)
+                    
+                    page_state = await self.page.get_page_state()
+                    schema = {
+                        "type": "object",
+                        "properties": {
+                            "selector": {"type": "string", "description": "CSS selector for the main search input"},
+                            "reasoning": {"type": "string", "description": "Why this element is the search input"}
+                        },
+                        "required": ["selector"]
+                    }
+                    
+                    # Format the actual HTML for the LLM
+                    elements_text = "\n".join([
+                        f"{i+1}. {el.get('tagName')} - {el.get('html', '')[:200]}"
+                        for i, el in enumerate(input_elements_html)
+                    ]) if input_elements_html else "No input elements found"
+                    
+                    prompt = f"""Find the main SEARCH input on this page.
+
+Page URL: {page_state.get('url', 'unknown')}
+Page Title: {page_state.get('title', 'unknown')}
+
+## ACTUAL INPUT ELEMENTS ON PAGE:
+{elements_text}
+
+Analyze the ACTUAL elements above and return a CSS selector for the PRIMARY search input.
+Use attributes you can see: name, id, role, aria-label, placeholder, title, etc.
+DO NOT guess - use ONLY attributes that exist in the HTML above."""
+                    
+                    result = await wrapper.generate_structured(
+                        prompt=prompt,
+                        schema=schema,
+                        system_prompt="You are analyzing REAL HTML. Return a CSS selector using ONLY attributes visible in the provided HTML. Never guess or hallucinate attributes.",
+                        temperature=0.1,
+                    )
+                    selector = result.get("selector")
+                    if selector:
+                        search_input = self.page.page.locator(selector).first
+                        logger.info(f"LLM found search input: {selector} (reasoning: {result.get('reasoning', 'N/A')})")
+                except Exception as e:
+                    logger.warning(f"LLM element detection failed: {e}")
+        
+        if not search_input:
+            raise RuntimeError("Could not find search input on page")
+        
+        # Wait for the element to be visible and click it
+        try:
+            await search_input.wait_for(state="visible", timeout=10000)
+            await search_input.click()
+            await asyncio.sleep(self.behavior.click_delay())
+        except Exception as e:
+            raise RuntimeError(f"Failed to click search input: {e}")
+        
+        # Type the query with human-like delays
+        await self._type_human_like(query)
         
         logger.info("Query typed successfully")
     
-    async def _click_search_button(self, selector: str) -> None:
-        """
-        Click search button with human-like behavior.
+    async def _type_human_like(self, text: str) -> None:
+        """Type text with human-like delays between keystrokes."""
+        words = text.split()
+        for i, word in enumerate(words):
+            for char in word:
+                delay_seconds = self.behavior.typing_delay()
+                await self.page.type_text(char, delay=int(delay_seconds * 1000))
+            
+            if i < len(words) - 1:
+                await self.page.type_text(" ", delay=int(self.behavior.word_pause() * 1000))
+    
+    async def _submit_search(self) -> None:
+        """Submit the search by pressing Enter (most reliable cross-engine method)."""
+        logger.info("Submitting search")
+        await asyncio.sleep(self.behavior.click_delay())
+        await self.page.press_key("Enter")
+        await asyncio.sleep(self.behavior.click_delay())
+    
+    async def _wait_for_results_page(self) -> None:
+        """Wait for search results page to load."""
+        logger.info("Waiting for results page to load")
         
-        Args:
-            selector: Button selector
+        # Wait for navigation/page load
+        await asyncio.sleep(2.0)  # Give time for page transition
+        
+        # Wait for page to stabilize (URL should change from homepage)
+        for _ in range(10):
+            current_url = await self.page.get_url()
+            # Most search engines have query params after search
+            if '?' in current_url or 'search' in current_url.lower():
+                break
+            await asyncio.sleep(0.5)
+        
+        # Additional settle time
+        await asyncio.sleep(self.behavior.scroll_delay())
+        
+        # Scroll down slightly (humans do this)
+        await self.page.evaluate("window.scrollBy(0, 300)")
+        await asyncio.sleep(self.behavior.scroll_delay())
+    
+    async def _extract_results_with_llm(self, max_results: int) -> List[SearchResult]:
         """
-        logger.info("Clicking search button")
+        Extract search results using LLM to analyze actual HTML structure.
+        
+        Following the pattern from page_explorer.py and page_analyzer.py:
+        - Extracts actual link elements with outerHTML and href attributes
+        - Provides real HTML context so LLM doesn't hallucinate
+        - Gets URLs directly from href attributes, not guessing
+        """
+        logger.info(f"Extracting up to {max_results} results using LLM")
         
         if not self.page:
             raise RuntimeError("Page controller not available")
         
-        try:
-            # Wait for button to be clickable
-            await self.page.wait_for_selector(selector, timeout=5000)
-            
-            # Small delay before clicking (human reads/aims)
-            await asyncio.sleep(self.behavior.click_delay())
-            
-            # Click button
-            await self.page.click_and_track(selector)
-            
-            # Wait after click
-            await asyncio.sleep(self.behavior.click_delay())
+        llm = getattr(self, 'llm_provider', None)
+        if not llm:
+            logger.warning("LLM not available, cannot extract results")
+            return []
         
+        from flybrowser.agents.structured_llm import StructuredLLMWrapper
+        wrapper = StructuredLLMWrapper(llm, max_repair_attempts=2)
+        
+        # Extract ACTUAL link elements with their HTML and href - following page_explorer.py pattern
+        # This gives us real URLs instead of requiring LLM to guess
+        search_results_data = await self.page.page.evaluate("""
+            () => {
+                const results = [];
+                const origin = window.location.origin;
+                
+                // Get all anchor elements that could be search results
+                // Search results typically are links with substantial text
+                const allLinks = document.querySelectorAll('a[href]');
+                
+                allLinks.forEach((a, idx) => {
+                    if (results.length >= 50) return;  // Limit for token efficiency
+                    
+                    const href = a.href || '';
+                    const text = (a.innerText || a.textContent || '').trim();
+                    
+                    // Skip empty links, same-page anchors, and navigation links
+                    if (!href || href === '#' || href.startsWith('javascript:') || !text) return;
+                    if (href.includes('google.com/search') || href.includes('bing.com/search')) return;
+                    if (text.length < 10 || text.length > 500) return;  // Skip very short/long text
+                    
+                    const rect = a.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return;  // Skip hidden elements
+                    
+                    // Get parent context to help identify if it's a search result
+                    const parent = a.parentElement;
+                    const grandparent = parent?.parentElement;
+                    
+                    // Get outerHTML but limit size (following page_analyzer.py pattern)
+                    let html = a.outerHTML;
+                    if (html.length > 300) html = html.substring(0, 300) + '...';
+                    
+                    // Get surrounding text for snippet (sibling elements)
+                    let snippet = '';
+                    if (parent) {
+                        // Look for description/snippet in nearby elements
+                        const siblings = parent.querySelectorAll('span, p, div');
+                        siblings.forEach(sib => {
+                            const sibText = (sib.innerText || '').trim();
+                            if (sibText.length > snippet.length && sibText.length < 500 && sibText !== text) {
+                                snippet = sibText;
+                            }
+                        });
+                    }
+                    
+                    results.push({
+                        // Actual data from DOM - not hallucinated
+                        title: text.substring(0, 200),
+                        url: href,  // Real URL from href attribute
+                        snippet: snippet.substring(0, 300),
+                        html: html,  // outerHTML for LLM context
+                        // Position context
+                        position: {
+                            top: Math.round(rect.top + window.scrollY),
+                            inViewport: rect.top >= 0 && rect.top < window.innerHeight
+                        },
+                        // Parent context helps identify search results vs nav
+                        parentTag: parent?.tagName?.toLowerCase() || '',
+                        grandparentTag: grandparent?.tagName?.toLowerCase() || '',
+                        parentClass: parent?.className?.substring(0, 100) || ''
+                    });
+                });
+                
+                return {
+                    links: results,
+                    pageInfo: {
+                        url: window.location.href,
+                        title: document.title,
+                        totalLinks: allLinks.length
+                    }
+                };
+            }
+        """)
+        
+        current_url = await self.page.get_url()
+        links = search_results_data.get('links', [])
+        page_info = search_results_data.get('pageInfo', {})
+        
+        logger.info(f"Extracted {len(links)} candidate links from DOM")
+        
+        if not links:
+            logger.warning("No links found in DOM")
+            return []
+        
+        # Format links for LLM to analyze - give it actual HTML context
+        links_text = "\n".join([
+            f"{i+1}. Title: {l.get('title', '')}\n"
+            f"   URL: {l.get('url', '')}\n"
+            f"   Snippet: {l.get('snippet', '')[:150]}\n"
+            f"   HTML: {l.get('html', '')[:150]}\n"
+            f"   Parent: <{l.get('parentTag', '')} class='{l.get('parentClass', '')[:50]}'>"
+            for i, l in enumerate(links[:30])  # Limit for tokens
+        ])
+        
+        schema = {
+            "type": "object",
+            "properties": {
+                "result_indices": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Indices (1-based) of links that are actual search results"
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "Brief explanation of how you identified search results"
+                }
+            },
+            "required": ["result_indices"]
+        }
+        
+        prompt = f"""Identify which of these links are ACTUAL SEARCH RESULTS (not ads, navigation, or related searches).
+
+Page URL: {current_url}
+Page Title: {page_info.get('title', 'Search Results')}
+
+## LINKS EXTRACTED FROM PAGE:
+{links_text}
+
+Return the indices (1-based) of links that are actual organic search results.
+Look for:
+- Links with descriptive titles and real destination URLs
+- Links that appear in the main content area (not header/footer/sidebar)
+- Links with snippets/descriptions
+
+Exclude:
+- Ads (usually marked or in special containers)
+- Navigation links (Home, About, etc.)
+- Related searches or suggestions
+- Pagination links"""
+
+        try:
+            result = await wrapper.generate_structured(
+                prompt=prompt,
+                schema=schema,
+                system_prompt="You are analyzing REAL extracted links from a search results page. Select only actual search results by their index.",
+                temperature=0.1,
+                max_tokens=1024,
+            )
+            
+            indices = result.get("result_indices", [])
+            logger.info(f"LLM identified {len(indices)} search results (reasoning: {result.get('reasoning', 'N/A')[:100]})")
+            
+            # Build SearchResult objects from the selected indices
+            results = []
+            for idx in indices[:max_results]:
+                if 1 <= idx <= len(links):
+                    link = links[idx - 1]  # Convert 1-based to 0-based
+                    url = link.get('url', '')
+                    if url and is_valid_url(url):
+                        results.append(SearchResult(
+                            title=link.get('title', ''),
+                            url=url,  # Real URL from DOM, not hallucinated
+                            snippet=clean_snippet(link.get('snippet', '')),
+                            position=len(results) + 1,
+                            source="llm_extraction",
+                        ))
+            
+            logger.info(f"Built {len(results)} SearchResult objects")
+            return results
+            
         except Exception as e:
-            # Fallback: press Enter key instead
-            logger.warning(f"Button click failed: {e}, pressing Enter instead")
-            await self.page.press_key("Enter")
-            await asyncio.sleep(self.behavior.click_delay())
+            logger.error(f"LLM result extraction failed: {e}")
+            # Fallback: return first N links that look like results
+            results = []
+            for link in links[:max_results]:
+                url = link.get('url', '')
+                if url and is_valid_url(url) and not any(x in url.lower() for x in ['google.com', 'bing.com', 'duckduckgo.com']):
+                    results.append(SearchResult(
+                        title=link.get('title', ''),
+                        url=url,
+                        snippet=clean_snippet(link.get('snippet', '')),
+                        position=len(results) + 1,
+                        source="dom_extraction_fallback",
+                    ))
+            return results
     
-    async def _handle_bot_detection_retry(self, query: str, config: Dict[str, str], max_results: int, search_engine: SearchEngine, start_time: float) -> ToolResult:
+    async def _handle_bot_detection_retry(self, query: str, engine_url: str, max_results: int, search_engine: SearchEngine, start_time: float) -> ToolResult:
         """
         Handle bot detection adaptively by retrying.
         
@@ -673,31 +765,21 @@ class SearchHumanTool(BaseTool):
         
         try:
             logger.info("Attempting to return to search homepage...")
-            await self.page.goto(config["url"])
+            # Use NavigateTool for navigation with obstacle handling
+            navigate_tool = self._get_navigate_tool()
+            nav_result = await navigate_tool.execute(url=engine_url)
+            if not nav_result.success:
+                logger.warning(f"Navigation failed during retry: {nav_result.error}")
             await asyncio.sleep(random.uniform(1.0, 2.0))
             
-            # Handle obstacles again
-            llm = getattr(self, 'llm_provider', None)
-            if llm:
-                # Get config from agent if available
-                agent_config = getattr(self, 'agent_config', None)
-                obstacle_config = agent_config.obstacle_detector if agent_config else None
-                
-                detector = ObstacleDetector(
-                    page=self.page.page,
-                    llm=llm,
-                    config=obstacle_config
-                )
-                await detector.detect_and_handle()
-            
-            # Retry search
+            # Retry search using LLM-based methods
             logger.info("Retrying search after bot detection...")
-            await self._enter_query_human_like(query, config["input_selector"])
-            await self._click_search_button(config["button_selector"])
-            await self._wait_for_results(config["result_selector"])
+            await self._enter_query_with_llm(query)
+            await self._submit_search()
+            await self._wait_for_results_page()
             
-            # Extract results
-            results = await self._extract_results(config, max_results)
+            # Extract results using LLM
+            results = await self._extract_results_with_llm(max_results)
             current_url = await self.page.get_url()
             
             # Check if still blocked
@@ -737,104 +819,6 @@ class SearchHumanTool(BaseTool):
                 error_code="BOT_DETECTED"
             )
     
-    async def _wait_for_results(self, selector: str) -> None:
-        """
-        Wait for search results to load.
-        
-        Args:
-            selector: Result container selector
-        """
-        logger.info("Waiting for results to load")
-        
-        if not self.page:
-            raise RuntimeError("Page controller not available")
-        
-        # Wait for results with generous timeout
-        await self.page.wait_for_selector(selector, timeout=15000)
-        
-        # Simulate reading/scrolling
-        await asyncio.sleep(self.behavior.scroll_delay())
-        
-        # Scroll down slightly (humans do this)
-        await self.page.evaluate("window.scrollBy(0, 300)")
-        await asyncio.sleep(self.behavior.scroll_delay())
-    
-    async def _extract_results(
-        self,
-        config: Dict[str, str],
-        max_results: int,
-    ) -> List[SearchResult]:
-        """
-        Extract search results from page.
-        
-        Args:
-            config: Engine configuration with selectors
-            max_results: Maximum results to extract
-            
-        Returns:
-            List of SearchResult objects
-        """
-        logger.info(f"Extracting up to {max_results} results")
-        
-        if not self.page:
-            raise RuntimeError("Page controller not available")
-        
-        results = []
-        
-        try:
-            # Get all result elements
-            result_elements = await self.page.query_selector_all(config["result_selector"])
-            
-            logger.info(f"Found {len(result_elements)} result elements")
-            
-            for i, elem in enumerate(result_elements[:max_results], 1):
-                try:
-                    # Extract title
-                    title_elem = await elem.query_selector(config["title_selector"])
-                    title = await title_elem.text_content() if title_elem else ""
-                    title = title.strip()
-                    
-                    # Extract URL
-                    link_elem = await elem.query_selector(config["link_selector"])
-                    url = ""
-                    if link_elem:
-                        url = await link_elem.get_attribute("href") or ""
-                    
-                    # Clean URL (remove tracking parameters for some engines)
-                    if url.startswith("/url?"):
-                        # Google redirect URL
-                        from urllib.parse import urlparse, parse_qs
-                        parsed = urlparse(url)
-                        url = parse_qs(parsed.query).get("q", [""])[0]
-                    
-                    # Extract snippet
-                    snippet_elem = await elem.query_selector(config["snippet_selector"])
-                    snippet = await snippet_elem.text_content() if snippet_elem else ""
-                    snippet = clean_snippet(snippet)
-                    
-                    # Validate and add result
-                    if title and url and is_valid_url(url):
-                        results.append(SearchResult(
-                            title=title,
-                            url=url,
-                            snippet=snippet,
-                            position=i,
-                            source=config.get("engine", "unknown"),
-                        ))
-                        
-                        logger.debug(f"Extracted result {i}: {title[:50]}...")
-                
-                except Exception as e:
-                    logger.debug(f"Failed to extract result {i}: {e}")
-                    continue
-            
-            logger.info(f"Successfully extracted {len(results)} results")
-            return results
-        
-        except Exception as e:
-            logger.error(f"Result extraction failed: {e}")
-            return []
-
 
 class SearchHumanAdvancedTool(SearchHumanTool):
     """
