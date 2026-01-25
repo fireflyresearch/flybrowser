@@ -110,6 +110,81 @@ class TemplateRenderer:
         
         return template.render(**context)
     
+    def render_completion(
+        self,
+        success: bool,
+        task: str,
+        duration_ms: float,
+        iterations: int,
+        result_data: Optional[str] = None,
+        error_message: Optional[str] = None,
+        max_iterations: Optional[int] = None,
+        static_url: Optional[str] = None,
+        inline_assets: bool = False,
+    ) -> str:
+        """Render the agent completion page template.
+        
+        Args:
+            success: Whether the agent task completed successfully
+            task: The task description that was executed
+            duration_ms: Execution duration in milliseconds
+            iterations: Number of iterations used
+            result_data: Optional result data (for successful extractions)
+            error_message: Optional error message (for failures)
+            max_iterations: Optional max iterations limit for display
+            static_url: Base URL for static assets (server mode)
+            inline_assets: Whether to inline CSS/JS (embedded mode)
+            
+        Returns:
+            Rendered HTML string
+        """
+        import json
+        
+        template = self.env.get_template("completion.html")
+        
+        # Format duration for display
+        if duration_ms < 1000:
+            duration_formatted = f"{duration_ms:.0f}ms"
+        elif duration_ms < 60000:
+            duration_formatted = f"{duration_ms / 1000:.1f}s"
+        else:
+            minutes = int(duration_ms // 60000)
+            seconds = int((duration_ms % 60000) // 1000)
+            duration_formatted = f"{minutes}m {seconds}s"
+        
+        # Format result data as JSON if it's a dict/list
+        formatted_result = None
+        if result_data is not None:
+            if isinstance(result_data, (dict, list)):
+                try:
+                    formatted_result = json.dumps(result_data, indent=2, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    formatted_result = str(result_data)
+            else:
+                formatted_result = str(result_data)
+        
+        context: Dict[str, Any] = {
+            "success": success,
+            "task": task,
+            "duration_formatted": duration_formatted,
+            "iterations": iterations,
+            "max_iterations": max_iterations,
+            "result_data": formatted_result,
+            "error_message": error_message,
+            "inline_styles": inline_assets,
+            "inline_scripts": inline_assets,
+        }
+        
+        if inline_assets:
+            # Load and inline CSS/JS for embedded mode
+            context["css_content"] = self._load_static_file("css/completion.css")
+            context["js_content"] = self._load_static_file("js/completion.js")
+        else:
+            # Use external URLs for server mode
+            context["static_url"] = static_url or "/static"
+        
+        return template.render(**context)
+    
     def render_player(
         self,
         stream_id: str,
@@ -223,6 +298,47 @@ def render_player_html(
         inline_assets=inline_assets,
         max_retries=max_retries,
         retry_delay=retry_delay,
+    )
+
+
+def render_completion_html(
+    success: bool,
+    task: str,
+    duration_ms: float,
+    iterations: int,
+    result_data: Optional[str] = None,
+    error_message: Optional[str] = None,
+    max_iterations: Optional[int] = None,
+    static_url: Optional[str] = None,
+    inline_assets: bool = False,
+) -> str:
+    """Convenience function to render agent completion page HTML.
+    
+    Args:
+        success: Whether the agent task completed successfully
+        task: The task description that was executed
+        duration_ms: Execution duration in milliseconds
+        iterations: Number of iterations used
+        result_data: Optional result data (for successful extractions)
+        error_message: Optional error message (for failures)
+        max_iterations: Optional max iterations limit for display
+        static_url: Base URL for static assets (server mode)
+        inline_assets: Whether to inline CSS/JS (embedded mode)
+        
+    Returns:
+        Rendered HTML string
+    """
+    renderer = TemplateRenderer.get_instance()
+    return renderer.render_completion(
+        success=success,
+        task=task,
+        duration_ms=duration_ms,
+        iterations=iterations,
+        result_data=result_data,
+        error_message=error_message,
+        max_iterations=max_iterations,
+        static_url=static_url,
+        inline_assets=inline_assets,
     )
 
 
