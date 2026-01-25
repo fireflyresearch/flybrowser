@@ -121,8 +121,8 @@ async with FlyBrowser(...) as browser:
     
     # Perform actions (all will be recorded)
     await browser.goto("https://example.com")
-    await browser.act("click the login button")
-    await browser.act("type 'user@example.com' in the email field")
+    await browser.act("scroll down to see more content")
+    await browser.act("click the first article link")
     
     # Stop and get recording
     recording = await browser.stop_recording()
