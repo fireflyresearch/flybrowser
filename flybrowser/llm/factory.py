@@ -14,7 +14,7 @@
 
 """Factory for creating LLM provider instances."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from flybrowser.exceptions import ConfigurationError
 from flybrowser.llm.anthropic_provider import AnthropicProvider
@@ -24,6 +24,7 @@ from flybrowser.llm.gemini_provider import GeminiProvider
 from flybrowser.llm.ollama_provider import OllamaProvider
 from flybrowser.llm.openai_provider import OpenAIProvider
 from flybrowser.llm.provider_status import ProviderStatus
+from flybrowser.utils.logger import logger
 
 
 class LLMProviderFactory:
@@ -45,6 +46,7 @@ class LLMProviderFactory:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         config: Optional[LLMProviderConfig] = None,
+        vision_enabled: Optional[bool] = None,
         **kwargs: Any,
     ) -> BaseLLMProvider:
         """
@@ -55,6 +57,10 @@ class LLMProviderFactory:
             model: Model name (optional, uses provider default if not specified)
             api_key: API key for the provider
             config: Full provider configuration (optional)
+            vision_enabled: Override auto-detected vision capability (optional)
+                - None: Use auto-detected capabilities (default)
+                - True: Force vision enabled
+                - False: Force vision disabled
             **kwargs: Additional provider-specific configuration
 
         Returns:
@@ -80,7 +86,11 @@ class LLMProviderFactory:
                 model = DEFAULT_CONFIGS.get(provider_type, {}).get("model", "default")
             except ValueError:
                 model = "default"
-
+        
+        # Pass vision_enabled override if provided
+        if vision_enabled is not None:
+            kwargs["vision_enabled"] = vision_enabled
+        
         # Create provider instance
         return provider_class(model=model, api_key=api_key, config=config, **kwargs)
 
@@ -120,7 +130,7 @@ class LLMProviderFactory:
         cls._providers[name.lower()] = provider_class
 
     @classmethod
-    def list_providers(cls, include_aliases: bool = True) -> list[str]:
+    def list_providers(cls, include_aliases: bool = True) -> list:
         """
         List all registered providers.
 

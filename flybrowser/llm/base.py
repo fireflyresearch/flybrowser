@@ -48,6 +48,7 @@ from flybrowser.llm.provider_status import ProviderStatus
 from flybrowser.llm.rate_limiter import RateLimiter
 from flybrowser.llm.retry import RetryHandler
 from flybrowser.utils.logger import logger
+from flybrowser.utils.execution_logger import get_execution_logger, LogVerbosity
 
 
 class ModelCapability(str, Enum):
@@ -151,7 +152,7 @@ class ModelInfo:
     provider: str
     capabilities: List[ModelCapability] = field(default_factory=list)
     context_window: int = 128000
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 8192  # Generous default to avoid truncation
     supports_system_prompt: bool = True
     cost_per_1k_input_tokens: Optional[float] = None
     cost_per_1k_output_tokens: Optional[float] = None
@@ -243,7 +244,12 @@ class BaseLLMProvider(ABC):
                 Not required for local providers like Ollama.
             config: Full provider configuration including retry, cache, rate limit settings.
                 If not provided, production features will be disabled.
-            **kwargs: Additional provider-specific configuration options
+            **kwargs: Additional provider-specific configuration options:
+                - llm_logging: Enable LLM request/response logging (default: False)
+                - vision_enabled: Override auto-detected vision capability (Optional[bool])
+                    - None: Use auto-detected capabilities (default)
+                    - True: Force vision enabled
+                    - False: Force vision disabled
 
         Note:
             When config is provided, the following production features are enabled:
@@ -256,6 +262,10 @@ class BaseLLMProvider(ABC):
         self.api_key = api_key
         self.provider_config = config
         self.extra_config = kwargs
+        
+        # Vision capability override
+        # None = use auto-detected, True = force on, False = force off
+        self._vision_enabled_override: Optional[bool] = kwargs.get("vision_enabled")
 
         # Initialize production features if config provided
         if config:
@@ -269,6 +279,26 @@ class BaseLLMProvider(ABC):
             self.cost_tracker = None
             self.rate_limiter = None
             self.retry_handler = None
+        
+        # Session-level usage tracking (always enabled)
+        self._session_prompt_tokens = 0
+        self._session_completion_tokens = 0
+        self._session_total_tokens = 0
+        self._session_cost = 0.0
+        self._session_calls = 0
+        self._session_cached_calls = 0
+        
+        # LLM request/response logging (configurable)
+        # Levels: False/0 = disabled, True/1 = basic, 2 = detailed (shows prompts/responses)
+        llm_logging_value = kwargs.get("llm_logging", False)
+        if isinstance(llm_logging_value, bool):
+            self._llm_logging_level = 1 if llm_logging_value else 0
+        else:
+            self._llm_logging_level = int(llm_logging_value)
+        self._llm_logging_enabled = self._llm_logging_level > 0
+        
+        # Execution logger for hierarchical logging
+        self._elog = get_execution_logger()
 
     async def generate_with_features(
         self,
@@ -325,14 +355,26 @@ class BaseLLMProvider(ABC):
                 )
 
             # Track cost
-            if self.cost_tracker and response.usage:
-                self.cost_tracker.record_usage(
-                    provider=self.__class__.__name__.replace("Provider", "").lower(),
-                    model=self.model,
-                    prompt_tokens=response.usage.get("prompt_tokens", 0),
-                    completion_tokens=response.usage.get("completion_tokens", 0),
-                    cached=False,
-                )
+            if response.usage:
+                prompt_tokens = response.usage.get("prompt_tokens", 0)
+                completion_tokens = response.usage.get("completion_tokens", 0)
+                
+                # Update session-level tracking
+                self._session_prompt_tokens += prompt_tokens
+                self._session_completion_tokens += completion_tokens
+                self._session_total_tokens += prompt_tokens + completion_tokens
+                self._session_calls += 1
+                
+                if self.cost_tracker:
+                    record = self.cost_tracker.record_usage(
+                        provider=self.__class__.__name__.replace("Provider", "").lower(),
+                        model=self.model,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cached=False,
+                    )
+                    if record:
+                        self._session_cost += record.cost
 
             # Cache response
             if use_cache and self.cache:
@@ -349,6 +391,109 @@ class BaseLLMProvider(ABC):
                     response.usage.get("total_tokens", 0) if response.usage else 0
                 )
                 self.rate_limiter.release(actual_tokens)
+
+    def enable_llm_logging(self, enabled: bool = True, level: int = 1) -> None:
+        """
+        Enable or disable LLM request/response logging.
+        
+        Args:
+            enabled: Whether to enable logging (default: True)
+            level: Logging level (default: 1)
+                - 0: Disabled
+                - 1: Basic (shows request/response timing)
+                - 2: Detailed (also shows prompts and responses)
+        """
+        if not enabled:
+            self._llm_logging_level = 0
+        else:
+            self._llm_logging_level = level
+        self._llm_logging_enabled = self._llm_logging_level > 0
+        
+        level_names = {0: "disabled", 1: "basic", 2: "detailed"}
+        logger.info(f"LLM logging: {level_names.get(self._llm_logging_level, 'unknown')} (level {self._llm_logging_level})")
+
+    def _log_llm_request(self, method: str, model: str, extra_info: str = "", prompt: str = "", system_prompt: str = "") -> float:
+        """
+        Log LLM request if logging is enabled. Returns start time.
+        
+        Args:
+            method: Method name (GENERATE, VISION, STRUCTURED)
+            model: Model name
+            extra_info: Additional info to show
+            prompt: The user prompt (logged at level 2)
+            system_prompt: The system prompt (logged at level 2)
+        """
+        import time
+        
+        # Use execution logger for hierarchical tracking
+        # llm_request only takes model and operation, extra_info is ignored at this level
+        self._elog.llm_request(model, method.lower())
+        
+        # Legacy logging for llm_logging mode (deprecated but kept for compatibility)
+        if self._llm_logging_enabled:
+            # Level 2: Show detailed prompts (DEBUG level in execution logger)
+            if self._llm_logging_level >= 2:
+                if system_prompt:
+                    sys_display = system_prompt[:500] + "..." if len(system_prompt) > 500 else system_prompt
+                    logger.debug(f"  LLM system: {sys_display}")
+                if prompt:
+                    prompt_display = prompt[:1000] + "..." if len(prompt) > 1000 else prompt
+                    logger.debug(f"  LLM prompt: {prompt_display}")
+        return time.time()
+
+    def _log_llm_response(self, method: str, start_time: float, tokens: int = 0, response_content: str = "") -> None:
+        """
+        Log LLM response if logging is enabled.
+        
+        Args:
+            method: Method name
+            start_time: Start time from _log_llm_request
+            tokens: Token count
+            response_content: The response content (logged at level 2)
+        """
+        import time
+        elapsed_s = time.time() - start_time
+        elapsed_ms = elapsed_s * 1000  # Convert to milliseconds
+        
+        # Use execution logger for hierarchical tracking
+        self._elog.llm_response(self.model, elapsed_ms, tokens if tokens > 0 else None)
+        
+        # Legacy logging for llm_logging mode (deprecated but kept for compatibility)
+        if self._llm_logging_enabled and self._llm_logging_level >= 2 and response_content:
+            resp_display = response_content[:2000] + "..." if len(response_content) > 2000 else response_content
+            logger.debug(f"  LLM response: {resp_display}")
+
+    def supports_vision(self) -> bool:
+        """
+        Check if this provider/model supports vision capabilities.
+        
+        Returns:
+            True if vision is supported, False otherwise
+        """
+        model_info = self.get_model_info()
+        return ModelCapability.VISION in model_info.capabilities
+    
+    @property
+    def vision_enabled(self) -> bool:
+        """
+        Property to check if vision is enabled for this provider/model.
+        
+        This is the canonical way to check vision capability. Use this instead
+        of supports_vision() for cleaner code.
+        
+        Checks in order:
+        1. Explicit override (vision_enabled parameter)
+        2. Auto-detected from model capabilities
+        
+        Returns:
+            True if vision is supported, False otherwise
+        """
+        # Check explicit override first
+        if self._vision_enabled_override is not None:
+            return self._vision_enabled_override
+        
+        # Fall back to auto-detected capabilities
+        return self.supports_vision()
 
     async def _generate_impl(
         self,
@@ -436,6 +581,71 @@ class BaseLLMProvider(ABC):
             Structured data matching the schema
         """
         pass
+
+    async def generate_structured_with_vision(
+        self,
+        prompt: str,
+        image_data: Union[bytes, ImageInput, List[ImageInput]],
+        schema: Dict[str, Any],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """
+        Generate a structured response with vision input, matching the provided schema.
+        
+        This combines vision capabilities with structured output for deterministic
+        JSON responses. Useful for ReAct agents where consistent output format is critical.
+
+        Args:
+            prompt: User prompt
+            image_data: Image data as bytes, ImageInput, or list of ImageInput
+            schema: JSON schema for the expected response
+            system_prompt: System prompt for context
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            **kwargs: Additional generation parameters
+
+        Returns:
+            Structured data matching the schema
+
+        Note:
+            Default implementation falls back to generate_with_vision and parses JSON.
+            Providers with native structured output support should override this method.
+        """
+        # Default: fall back to vision + JSON parsing
+        response = await self.generate_with_vision(
+            prompt=prompt,
+            image_data=image_data,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+        
+        # Try to parse JSON from response
+        import json
+        content = response.content.strip()
+        
+        # Extract JSON from markdown code blocks if present
+        if content.startswith("```"):
+            import re
+            json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content, re.DOTALL)
+            if json_match:
+                content = json_match.group(1).strip()
+        
+        # Find JSON object
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            content = content[start:end + 1]
+        
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse structured response: {e}")
+            return {"error": "Failed to parse response", "raw_content": response.content}
 
     async def generate_with_tools(
         self,
@@ -542,7 +752,7 @@ class BaseLLMProvider(ABC):
             provider=self.__class__.__name__.replace("Provider", "").lower(),
             capabilities=[ModelCapability.TEXT_GENERATION],
             context_window=128000,
-            max_output_tokens=4096,
+            max_output_tokens=8192,  # Generous default to avoid truncation
             supports_system_prompt=True,
         )
 
@@ -582,6 +792,86 @@ class BaseLLMProvider(ABC):
             stats["rate_limit"] = self.rate_limiter.get_stats()
 
         return stats
+    
+    def get_session_usage(self) -> Dict[str, Any]:
+        """
+        Get accumulated usage statistics for the current session.
+        
+        This tracks all LLM calls made through this provider instance,
+        regardless of whether cost_tracker is configured.
+        
+        Returns:
+            Dictionary with session usage statistics:
+            - prompt_tokens: Total input tokens
+            - completion_tokens: Total output tokens
+            - total_tokens: Total tokens
+            - cost_usd: Total cost (0.0 if cost_tracker not configured)
+            - calls_count: Number of API calls
+            - cached_calls: Number of cached responses
+            - model: Model name
+        """
+        return {
+            "prompt_tokens": self._session_prompt_tokens,
+            "completion_tokens": self._session_completion_tokens,
+            "total_tokens": self._session_total_tokens,
+            "cost_usd": self._session_cost,
+            "calls_count": self._session_calls,
+            "cached_calls": self._session_cached_calls,
+            "model": self.model,
+            "models_used": [self.model] if self.model else [],
+        }
+    
+    def reset_session_usage(self) -> None:
+        """
+        Reset session-level usage tracking.
+        
+        Call this to start fresh tracking for a new operation.
+        """
+        self._session_prompt_tokens = 0
+        self._session_completion_tokens = 0
+        self._session_total_tokens = 0
+        self._session_cost = 0.0
+        self._session_calls = 0
+        self._session_cached_calls = 0
+    
+    def record_cached_call(self) -> None:
+        """
+        Record that a cached response was used.
+        
+        Call this when returning a cached response to track cache hits.
+        """
+        self._session_cached_calls += 1
+    
+    def _track_usage(self, response: LLMResponse) -> None:
+        """
+        Track usage from an LLMResponse.
+        
+        Call this after getting a response from generate() or generate_with_vision()
+        to update session-level tracking.
+        
+        Args:
+            response: LLMResponse from a generate call
+        """
+        if response.usage:
+            self._session_prompt_tokens += response.usage.get("prompt_tokens", 0)
+            self._session_completion_tokens += response.usage.get("completion_tokens", 0)
+            self._session_total_tokens += response.usage.get("total_tokens", 0)
+            self._session_calls += 1
+            
+            # Track cost if cost_tracker is available
+            if self.cost_tracker:
+                record = self.cost_tracker.record_usage(
+                    provider=self.__class__.__name__.replace("Provider", "").lower(),
+                    model=self.model,
+                    prompt_tokens=response.usage.get("prompt_tokens", 0),
+                    completion_tokens=response.usage.get("completion_tokens", 0),
+                    cached=response.cached,
+                )
+                if record:
+                    self._session_cost += record.cost
+        
+        if response.cached:
+            self._session_cached_calls += 1
 
     @classmethod
     def check_availability(cls) -> ProviderStatus:
@@ -607,13 +897,13 @@ class BaseLLMProvider(ABC):
         )
 
     def _normalize_images(
-        self, image_data: Union[bytes, ImageInput, List[ImageInput]]
+        self, image_data: Union[bytes, ImageInput, List[Union[bytes, ImageInput]]]
     ) -> List[ImageInput]:
         """
         Normalize image input to a list of ImageInput objects.
 
         Args:
-            image_data: Image data in various formats
+            image_data: Image data in various formats (bytes, ImageInput, or list of either)
 
         Returns:
             List of ImageInput objects
@@ -623,7 +913,16 @@ class BaseLLMProvider(ABC):
         elif isinstance(image_data, ImageInput):
             return [image_data]
         elif isinstance(image_data, list):
-            return image_data
+            # Normalize each item in the list
+            result = []
+            for item in image_data:
+                if isinstance(item, bytes):
+                    result.append(ImageInput.from_bytes(item))
+                elif isinstance(item, ImageInput):
+                    result.append(item)
+                else:
+                    raise ValueError(f"Unsupported image item type in list: {type(item)}")
+            return result
         else:
             raise ValueError(f"Unsupported image_data type: {type(image_data)}")
 

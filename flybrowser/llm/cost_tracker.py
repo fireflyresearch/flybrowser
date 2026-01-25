@@ -41,39 +41,15 @@ from flybrowser.llm.config import CostTrackingConfig, LLMProviderType
 from flybrowser.utils.logger import logger
 
 
-# Pricing per 1M tokens (as of January 2026)
-# Source: Official provider pricing pages
-# Note: Prices may change - update periodically
-PRICING_TABLE = {
-    LLMProviderType.OPENAI: {
-        # GPT-5 series (latest)
-        "gpt-5.2": {"input": 5.00, "output": 20.00},
-        "gpt-5-mini": {"input": 1.00, "output": 4.00},
-        "gpt-5-nano": {"input": 0.25, "output": 1.00},
-        "gpt-5": {"input": 4.00, "output": 16.00},
-        # GPT-4 series (legacy but still available)
-        "gpt-4.1": {"input": 3.00, "output": 12.00},
-        "gpt-4o": {"input": 2.50, "output": 10.00},
-        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-        "gpt-4-turbo": {"input": 10.00, "output": 30.00},
-        "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
-    },
-    LLMProviderType.ANTHROPIC: {
-        # Claude 4.5 series (latest)
-        "claude-sonnet-4-5-20250929": {"input": 3.00, "output": 15.00},
-        "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00},
-        "claude-opus-4-5-20251101": {"input": 5.00, "output": 25.00},
-        # Claude 3.5 series (legacy)
-        "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
-        "claude-3-opus-20240229": {"input": 15.00, "output": 75.00},
-        "claude-3-sonnet-20240229": {"input": 3.00, "output": 15.00},
-        "claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
-    },
-    # Local models have zero cost
-    LLMProviderType.OLLAMA: {},
-    LLMProviderType.LM_STUDIO: {},
-    LLMProviderType.LOCAL_AI: {},
-    LLMProviderType.VLLM: {},
+# Provider name mapping for registry lookups
+_PROVIDER_NAME_MAP = {
+    LLMProviderType.OPENAI: "openai",
+    LLMProviderType.ANTHROPIC: "anthropic",
+    LLMProviderType.GEMINI: "gemini",
+    LLMProviderType.OLLAMA: "ollama",
+    LLMProviderType.LM_STUDIO: "ollama",  # Uses same registry as ollama
+    LLMProviderType.LOCAL_AI: "ollama",
+    LLMProviderType.VLLM: "ollama",
 }
 
 
@@ -196,7 +172,7 @@ class CostTracker:
         completion_tokens: int,
     ) -> float:
         """
-        Calculate cost for a request.
+        Calculate cost for a request using simple hardcoded pricing.
 
         Args:
             provider: Provider type
@@ -207,18 +183,56 @@ class CostTracker:
         Returns:
             Cost in USD
         """
-        if provider not in PRICING_TABLE:
-            return 0.0
-
-        model_pricing = PRICING_TABLE[provider].get(model)
-        if not model_pricing:
-            logger.warning(f"No pricing data for {provider}/{model}, assuming zero cost")
-            return 0.0
-
-        input_cost = (prompt_tokens / 1_000_000) * model_pricing["input"]
-        output_cost = (completion_tokens / 1_000_000) * model_pricing["output"]
-
-        return input_cost + output_cost
+        # Simple hardcoded pricing (approximate values as of Jan 2026)
+        model_lower = model.lower()
+        
+        if provider == LLMProviderType.OPENAI:
+            if "gpt-5" in model_lower:
+                input_cost = 0.010
+                output_cost = 0.030
+            elif "gpt-4o" in model_lower:
+                input_cost = 0.0025
+                output_cost = 0.010
+            elif "gpt-4" in model_lower:
+                input_cost = 0.030
+                output_cost = 0.060
+            elif "o1" in model_lower or "o3" in model_lower:
+                input_cost = 0.015
+                output_cost = 0.060
+            elif "gpt-3.5" in model_lower:
+                input_cost = 0.0005
+                output_cost = 0.0015
+            else:
+                input_cost = 0.0
+                output_cost = 0.0
+        elif provider == LLMProviderType.ANTHROPIC:
+            if "opus" in model_lower:
+                input_cost = 0.015
+                output_cost = 0.075
+            elif "sonnet" in model_lower:
+                input_cost = 0.003
+                output_cost = 0.015
+            elif "haiku" in model_lower:
+                input_cost = 0.00025
+                output_cost = 0.00125
+            else:
+                input_cost = 0.0
+                output_cost = 0.0
+        elif provider == LLMProviderType.GEMINI or provider == LLMProviderType.GOOGLE:
+            if "pro" in model_lower:
+                input_cost = 0.00125
+                output_cost = 0.005
+            else:
+                input_cost = 0.0  # Free tier
+                output_cost = 0.0
+        else:
+            # Local models (Ollama, etc.) are free
+            input_cost = 0.0
+            output_cost = 0.0
+        
+        # Calculate cost based on actual tokens
+        cost = (prompt_tokens / 1000) * input_cost + (completion_tokens / 1000) * output_cost
+        return cost
 
     def record_usage(
         self,

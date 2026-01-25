@@ -106,6 +106,59 @@ class AnthropicProvider(BaseLLMProvider):
         """
         super().__init__(model, api_key, **kwargs)
         self.client = AsyncAnthropic(api_key=api_key)
+        
+        # Track initialization state
+        self._capabilities_detected: bool = False
+        self._model_capabilities_cache: Optional[List[ModelCapability]] = None
+
+    async def initialize(self) -> None:
+        """
+        Initialize the provider.
+        
+        Vision support is determined by model name patterns and can be overridden
+        with the vision_enabled parameter.
+        """
+        if not self._capabilities_detected:
+            self._model_capabilities_cache = self._get_basic_capabilities()
+            self._capabilities_detected = True
+            
+            has_vision = ModelCapability.VISION in self._model_capabilities_cache
+            if has_vision:
+                logger.info(f"Vision: [INFO] ENABLED for model {self.model}")
+            else:
+                logger.debug(f"Vision: [INFO] DISABLED for model {self.model}")
+
+    def _get_basic_capabilities(self) -> List[ModelCapability]:
+        """
+        Get model capabilities based on model name patterns.
+        
+        Vision support is determined by model name (claude-3, claude-4) and can be
+        overridden with vision_enabled parameter.
+        
+        Returns:
+            List of ModelCapability enum values
+        """
+        model_lower = self.model.lower()
+        capabilities = [
+            ModelCapability.TEXT_GENERATION,
+            ModelCapability.STREAMING,
+            ModelCapability.TOOL_CALLING,
+        ]
+        
+        # All Claude 3+ models have vision
+        # Check override first
+        if self._vision_enabled_override is not None:
+            if self._vision_enabled_override:
+                capabilities.append(ModelCapability.VISION)
+        elif "claude-3" in model_lower or "claude-4" in model_lower:
+            capabilities.append(ModelCapability.VISION)
+        
+        # Claude 4.5 models have extended thinking
+        if "claude-4" in model_lower:
+            capabilities.append(ModelCapability.EXTENDED_THINKING)
+        
+        return capabilities
+
 
     @classmethod
     def check_availability(cls) -> ProviderStatus:
@@ -172,27 +225,46 @@ class AnthropicProvider(BaseLLMProvider):
             >>> print(response.content)
             'The capital of France is Paris.'
         """
+        # Ensure capabilities are detected via API
+        await self.initialize()
+
         try:
+            # Log LLM request (with prompts at level 2)
+            start_time = self._log_llm_request(
+                "GENERATE", self.model,
+                prompt=prompt, system_prompt=system_prompt or ""
+            )
+
             # Call Anthropic Messages API
             response = await self.client.messages.create(
                 model=self.model,
-                max_tokens=max_tokens or 4096,
+                max_tokens=max_tokens or 8192,  # Generous default to avoid truncation
                 temperature=temperature,
                 system=system_prompt or "",
                 messages=[{"role": "user", "content": prompt}],
                 **kwargs,
             )
 
+            # Log response (with content at level 2)
+            total_tokens = response.usage.input_tokens + response.usage.output_tokens
+            response_content = response.content[0].text if response.content else ""
+            self._log_llm_response("GENERATE", start_time, total_tokens, response_content)
+
             # Extract response and usage information
-            return LLMResponse(
+            llm_response = LLMResponse(
                 content=response.content[0].text if response.content else "",
                 model=response.model,
                 usage={
                     "prompt_tokens": response.usage.input_tokens,
                     "completion_tokens": response.usage.output_tokens,
-                    "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
+                    "total_tokens": total_tokens,
                 },
             )
+
+            # Track usage at session level
+            self._track_usage(llm_response)
+
+            return llm_response
         except Exception as e:
             logger.error(f"Anthropic generation error: {e}")
             raise LLMProviderError(f"Anthropic generation failed: {e}") from e
@@ -210,10 +282,34 @@ class AnthropicProvider(BaseLLMProvider):
         Generate a response with vision using Anthropic.
 
         Supports single image (bytes or ImageInput) or multiple images (List[ImageInput]).
+
+        If the model does not support vision, falls back to text-only generation.
         """
+        # Check if model supports vision
+        if not self.supports_vision():
+            logger.warning(
+                f"[WARN] Model {self.model} does not support vision! "
+                f"Vision-capable Claude models: claude-3-opus, claude-3-sonnet, claude-3-haiku, claude-3.5-sonnet. "
+                f"Falling back to text-only generation (image will be ignored)."
+            )
+            # Fall back to text-only generation
+            return await self.generate(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+
         try:
             # Normalize images to list of ImageInput
             images = self._normalize_images(image_data)
+
+            # Log LLM vision request (with prompts at level 2)
+            start_time = self._log_llm_request(
+                "VISION", self.model, f"{len(images)} images",
+                prompt=prompt, system_prompt=system_prompt or ""
+            )
 
             # Build content with images first, then text (Anthropic format)
             content: List[Dict[str, Any]] = []
@@ -245,23 +341,33 @@ class AnthropicProvider(BaseLLMProvider):
 
             response = await self.client.messages.create(
                 model=self.model,
-                max_tokens=max_tokens or 4096,
+                max_tokens=max_tokens or 8192,  # Generous default to avoid truncation
                 temperature=temperature,
                 system=system_prompt or "",
                 messages=[{"role": "user", "content": content}],
                 **kwargs,
             )
 
-            return LLMResponse(
+            # Log response (with content at level 2)
+            total_tokens = response.usage.input_tokens + response.usage.output_tokens
+            response_content = response.content[0].text if response.content else ""
+            self._log_llm_response("VISION", start_time, total_tokens, response_content)
+
+            llm_response = LLMResponse(
                 content=response.content[0].text if response.content else "",
                 model=response.model,
                 usage={
                     "prompt_tokens": response.usage.input_tokens,
                     "completion_tokens": response.usage.output_tokens,
-                    "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
+                    "total_tokens": total_tokens,
                 },
                 finish_reason=response.stop_reason,
             )
+
+            # Track usage at session level
+            self._track_usage(llm_response)
+
+            return llm_response
         except Exception as e:
             logger.error(f"Anthropic vision generation error: {e}")
             raise LLMProviderError(f"Anthropic vision generation failed: {e}") from e
@@ -278,13 +384,19 @@ class AnthropicProvider(BaseLLMProvider):
         try:
             # Add JSON schema instruction to system prompt
             schema_instruction = (
-                f"\n\nYou must respond with valid JSON matching this schema: {json.dumps(schema)}"
+                f"\n\nYou MUST respond with valid JSON only. No markdown, no code blocks, just pure JSON matching this schema: {json.dumps(schema)}"
             )
             full_system_prompt = (system_prompt or "") + schema_instruction
 
+            # Log structured request (with prompts at level 2)
+            start_time = self._log_llm_request(
+                "STRUCTURED", self.model,
+                prompt=prompt, system_prompt=full_system_prompt
+            )
+
             response = await self.client.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=8192,  # Generous default to avoid truncation
                 temperature=temperature,
                 system=full_system_prompt,
                 messages=[{"role": "user", "content": prompt}],
@@ -292,10 +404,176 @@ class AnthropicProvider(BaseLLMProvider):
             )
 
             content = response.content[0].text if response.content else "{}"
+            total_tokens = response.usage.input_tokens + response.usage.output_tokens
+            self._log_llm_response("STRUCTURED", start_time, total_tokens, response_content=content)
+            
+            # Track usage at session level
+            llm_response = LLMResponse(
+                content=content,
+                model=response.model,
+                usage={
+                    "prompt_tokens": response.usage.input_tokens,
+                    "completion_tokens": response.usage.output_tokens,
+                    "total_tokens": total_tokens,
+                },
+            )
+            self._track_usage(llm_response)
+            
+            # Extract JSON from response (handle markdown code blocks)
+            content = content.strip()
+            if content.startswith("```"):
+                import re
+                json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content, re.DOTALL)
+                if json_match:
+                    content = json_match.group(1).strip()
+            
+            # Find JSON object
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                content = content[start:end + 1]
+            
             return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(f"Anthropic structured response not valid JSON: {e}")
+            raise LLMProviderError(f"Anthropic structured response not valid JSON: {e}") from e
         except Exception as e:
             logger.error(f"Anthropic structured generation error: {e}")
             raise LLMProviderError(f"Anthropic structured generation failed: {e}") from e
+
+    async def generate_structured_with_vision(
+        self,
+        prompt: str,
+        image_data: Union[bytes, "ImageInput", List["ImageInput"]],
+        schema: Dict[str, Any],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """
+        Generate structured output with vision using Anthropic.
+        
+        Combines vision capabilities with JSON output instructions for deterministic structured output.
+        
+        Args:
+            prompt: User prompt (should mention JSON format for best results)
+            image_data: Image data as bytes, ImageInput, or list of ImageInput
+            schema: JSON schema for the expected response
+            system_prompt: System prompt for context
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            **kwargs: Additional generation parameters
+            
+        Returns:
+            Parsed JSON response as dictionary
+        """
+        # Check if model supports vision
+        if not self.supports_vision():
+            logger.warning(
+                f"[WARN] Model {self.model} does not support vision! "
+                f"Falling back to text-only structured generation."
+            )
+            return await self.generate_structured(
+                prompt=prompt,
+                schema=schema,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                **kwargs,
+            )
+        
+        try:
+            # Normalize images to list of ImageInput
+            images = self._normalize_images(image_data)
+            
+            # Add JSON schema instruction to system prompt
+            schema_instruction = (
+                f"\n\nYou MUST respond with valid JSON only. No markdown, no code blocks, just pure JSON matching this schema: {json.dumps(schema)}"
+            )
+            full_system_prompt = (system_prompt or "") + schema_instruction
+            
+            # Log request
+            start_time = self._log_llm_request(
+                "STRUCTURED_VISION", self.model,
+                f"{len(images)} images",
+                prompt=prompt, system_prompt=full_system_prompt
+            )
+            
+            # Build content with images first, then text (Anthropic format)
+            content: List[Dict[str, Any]] = []
+            
+            for img in images:
+                if img.source_type == "url":
+                    content.append({
+                        "type": "image",
+                        "source": {"type": "url", "url": img.data},
+                    })
+                else:
+                    # Convert bytes to base64 if needed
+                    if img.source_type == "bytes":
+                        img_base64 = base64.b64encode(img.data).decode("utf-8")
+                    else:
+                        img_base64 = img.data
+                    
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img.media_type,
+                            "data": img_base64,
+                        },
+                    })
+            
+            content.append({"type": "text", "text": prompt})
+            
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens or 8192,  # Generous default to avoid truncation
+                temperature=temperature,
+                system=full_system_prompt,
+                messages=[{"role": "user", "content": content}],
+                **kwargs,
+            )
+            
+            # Log response
+            total_tokens = response.usage.input_tokens + response.usage.output_tokens
+            response_content = response.content[0].text if response.content else "{}"
+            self._log_llm_response("STRUCTURED_VISION", start_time, total_tokens, response_content)
+            
+            # Track usage at session level
+            llm_response = LLMResponse(
+                content=response_content,
+                model=response.model,
+                usage={
+                    "prompt_tokens": response.usage.input_tokens,
+                    "completion_tokens": response.usage.output_tokens,
+                    "total_tokens": total_tokens,
+                },
+            )
+            self._track_usage(llm_response)
+            
+            # Extract JSON from response
+            result_content = response_content.strip()
+            if result_content.startswith("```"):
+                import re
+                json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", result_content, re.DOTALL)
+                if json_match:
+                    result_content = json_match.group(1).strip()
+            
+            # Find JSON object
+            start = result_content.find("{")
+            end = result_content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                result_content = result_content[start:end + 1]
+            
+            return json.loads(result_content)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Anthropic structured vision response not valid JSON: {e}")
+            raise LLMProviderError(f"Anthropic structured vision response not valid JSON: {e}") from e
+        except Exception as e:
+            logger.error(f"Anthropic structured vision generation error: {e}")
+            raise LLMProviderError(f"Anthropic structured vision generation failed: {e}") from e
 
     async def generate_with_tools(
         self,
@@ -325,7 +603,7 @@ class AnthropicProvider(BaseLLMProvider):
 
             api_kwargs = {
                 "model": self.model,
-                "max_tokens": max_tokens or 4096,
+                "max_tokens": max_tokens or 8192,  # Generous default to avoid truncation
                 "temperature": temperature,
                 "system": system_prompt or "",
                 "messages": [{"role": "user", "content": prompt}],
@@ -382,7 +660,7 @@ class AnthropicProvider(BaseLLMProvider):
         try:
             async with self.client.messages.stream(
                 model=self.model,
-                max_tokens=max_tokens or 4096,
+                max_tokens=max_tokens or 8192,  # Generous default to avoid truncation
                 temperature=temperature,
                 system=system_prompt or "",
                 messages=[{"role": "user", "content": prompt}],
@@ -395,28 +673,45 @@ class AnthropicProvider(BaseLLMProvider):
             raise LLMProviderError(f"Anthropic streaming failed: {e}") from e
 
     def get_model_info(self) -> ModelInfo:
-        """Get information about the current Anthropic model."""
-        capabilities = [
-            ModelCapability.TEXT_GENERATION,
-            ModelCapability.VISION,
-            ModelCapability.MULTI_IMAGE_VISION,
-            ModelCapability.STREAMING,
-            ModelCapability.TOOL_CALLING,
-            ModelCapability.STRUCTURED_OUTPUT,
-        ]
-
-        # Extended thinking for Claude 4.5 models
-        if "4-5" in self.model or "4.5" in self.model:
-            capabilities.append(ModelCapability.EXTENDED_THINKING)
-
+        """
+        Get information about the current Anthropic model.
+        
+        Uses simple hardcoded values based on model name patterns.
+        """
+        # Use cached capabilities if available
+        if self._model_capabilities_cache is not None:
+            capabilities = self._model_capabilities_cache
+        else:
+            capabilities = self._get_basic_capabilities()
+        
+        # Simple hardcoded pricing and context windows
+        model_lower = self.model.lower()
+        
+        if "opus" in model_lower:
+            input_cost = 0.015
+            output_cost = 0.075
+        elif "sonnet" in model_lower:
+            input_cost = 0.003
+            output_cost = 0.015
+        elif "haiku" in model_lower:
+            input_cost = 0.00025
+            output_cost = 0.00125
+        else:
+            input_cost = 0.0
+            output_cost = 0.0
+        
+        # All Claude 3+ models have 200K context
+        context_window = 200000
+        max_output = 8192
+        
         return ModelInfo(
             name=self.model,
             provider="anthropic",
             capabilities=capabilities,
-            context_window=200000,
-            max_output_tokens=4096,
+            context_window=context_window,
+            max_output_tokens=max_output,
             supports_system_prompt=True,
-            cost_per_1k_input_tokens=0.003,
-            cost_per_1k_output_tokens=0.015,
+            cost_per_1k_input_tokens=input_cost,
+            cost_per_1k_output_tokens=output_cost,
         )
 

@@ -127,15 +127,16 @@ class MultiProviderConfig(BaseModel):
 DEFAULT_CONFIGS = {
     LLMProviderType.OPENAI: {
         "model": "gpt-5.2",  # Latest flagship model
-        "max_tokens": 4096,
+        "max_tokens": 8192,  # Generous default to avoid truncation
     },
     LLMProviderType.ANTHROPIC: {
         "model": "claude-sonnet-4-5-20250929",  # Latest Sonnet model
-        "max_tokens": 4096,
+        "max_tokens": 8192,  # Generous default to avoid truncation
     },
     LLMProviderType.OLLAMA: {
         "model": "qwen3:8b",  # Latest Qwen3 model
         "base_url": "http://localhost:11434",
+        "max_tokens": 8192,  # Generous default to avoid truncation
     },
     LLMProviderType.GEMINI: {
         "model": "gemini-2.0-flash",  # Latest Gemini Flash model

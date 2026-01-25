@@ -104,6 +104,55 @@ class GeminiProvider(BaseLLMProvider):
         """
         super().__init__(model, api_key, **kwargs)
         self.base_url = base_url.rstrip("/")
+        
+        # Track initialization state
+        self._capabilities_detected: bool = False
+        self._model_capabilities_cache: Optional[List[ModelCapability]] = None
+
+    async def initialize(self) -> None:
+        """
+        Initialize the provider.
+        
+        Vision support is determined by model name patterns and can be overridden
+        with the vision_enabled parameter.
+        """
+        if not self._capabilities_detected:
+            self._model_capabilities_cache = self._get_basic_capabilities()
+            self._capabilities_detected = True
+            
+            has_vision = ModelCapability.VISION in self._model_capabilities_cache
+            if has_vision:
+                logger.info(f"Vision: [INFO] ENABLED for model {self.model}")
+            else:
+                logger.debug(f"Vision: [INFO] DISABLED for model {self.model}")
+
+    def _get_basic_capabilities(self) -> List[ModelCapability]:
+        """
+        Get model capabilities based on model name patterns.
+        
+        Vision support is determined by model name (gemini-1.5+, gemini-2.0+) and can be
+        overridden with vision_enabled parameter.
+        
+        Returns:
+            List of ModelCapability enum values
+        """
+        model_lower = self.model.lower()
+        capabilities = [
+            ModelCapability.TEXT_GENERATION,
+            ModelCapability.STREAMING,
+            ModelCapability.TOOL_CALLING,
+        ]
+        
+        # All Gemini 1.5+ and 2.0+ models have vision
+        # Check override first
+        if self._vision_enabled_override is not None:
+            if self._vision_enabled_override:
+                capabilities.append(ModelCapability.VISION)
+        elif "gemini-1.5" in model_lower or "gemini-2.0" in model_lower or "gemini-2" in model_lower:
+            capabilities.append(ModelCapability.VISION)
+        
+        return capabilities
+
 
     @classmethod
     def check_availability(cls) -> ProviderStatus:
@@ -156,7 +205,16 @@ class GeminiProvider(BaseLLMProvider):
         **kwargs: Any,
     ) -> LLMResponse:
         """Generate a text response using Google's Generative AI API."""
+        # Ensure capabilities are detected via API
+        await self.initialize()
+
         try:
+            # Log LLM request (with prompts at level 2)
+            start_time = self._log_llm_request(
+                "GENERATE", self.model,
+                prompt=prompt, system_prompt=system_prompt or ""
+            )
+
             # Build request payload
             contents = []
 
@@ -190,16 +248,25 @@ class GeminiProvider(BaseLLMProvider):
             # Extract usage
             usage_metadata = result.get("usageMetadata", {})
 
-            return LLMResponse(
+            # Log response (with content at level 2)
+            total_tokens = usage_metadata.get("totalTokenCount", 0)
+            self._log_llm_response("GENERATE", start_time, total_tokens, content)
+
+            llm_response = LLMResponse(
                 content=content,
                 model=self.model,
                 usage={
                     "prompt_tokens": usage_metadata.get("promptTokenCount", 0),
                     "completion_tokens": usage_metadata.get("candidatesTokenCount", 0),
-                    "total_tokens": usage_metadata.get("totalTokenCount", 0),
+                    "total_tokens": total_tokens,
                 },
                 finish_reason=result.get("candidates", [{}])[0].get("finishReason"),
             )
+
+            # Track usage at session level
+            self._track_usage(llm_response)
+
+            return llm_response
         except Exception as e:
             logger.error(f"Gemini generation error: {e}")
             raise LLMProviderError(f"Gemini generation failed: {e}") from e
@@ -217,10 +284,34 @@ class GeminiProvider(BaseLLMProvider):
         Generate a response with vision using Gemini.
 
         Supports single image (bytes or ImageInput) or multiple images (List[ImageInput]).
+
+        If the model does not support vision, falls back to text-only generation.
         """
+        # Check if model supports vision
+        if not self.supports_vision():
+            logger.warning(
+                f"[WARN] Model {self.model} does not support vision! "
+                f"Vision-capable Gemini models: gemini-1.5-pro, gemini-1.5-flash, gemini-2.0-flash-exp. "
+                f"Falling back to text-only generation (image will be ignored)."
+            )
+            # Fall back to text-only generation
+            return await self.generate(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+
         try:
             # Normalize images to list of ImageInput
             images = self._normalize_images(image_data)
+
+            # Log LLM vision request (with prompts at level 2)
+            start_time = self._log_llm_request(
+                "VISION", self.model, f"{len(images)} images",
+                prompt=prompt, system_prompt=system_prompt or ""
+            )
 
             # Build parts with images and text
             parts: List[Dict[str, Any]] = []
@@ -263,16 +354,25 @@ class GeminiProvider(BaseLLMProvider):
 
             usage_metadata = result.get("usageMetadata", {})
 
-            return LLMResponse(
+            # Log response (with content at level 2)
+            total_tokens = usage_metadata.get("totalTokenCount", 0)
+            self._log_llm_response("VISION", start_time, total_tokens, content)
+
+            llm_response = LLMResponse(
                 content=content,
                 model=self.model,
                 usage={
                     "prompt_tokens": usage_metadata.get("promptTokenCount", 0),
                     "completion_tokens": usage_metadata.get("candidatesTokenCount", 0),
-                    "total_tokens": usage_metadata.get("totalTokenCount", 0),
+                    "total_tokens": total_tokens,
                 },
                 finish_reason=result.get("candidates", [{}])[0].get("finishReason"),
             )
+
+            # Track usage at session level
+            self._track_usage(llm_response)
+
+            return llm_response
         except Exception as e:
             logger.error(f"Gemini vision generation error: {e}")
             raise LLMProviderError(f"Gemini vision generation failed: {e}") from e
@@ -289,8 +389,8 @@ class GeminiProvider(BaseLLMProvider):
         try:
             # Add JSON schema instruction to prompt
             schema_instruction = (
-                f"\n\nYou must respond with valid JSON matching this schema: "
-                f"{json.dumps(schema)}\n\nRespond only with the JSON, no other text."
+                f"\n\nYou MUST respond with valid JSON only. No markdown, no code blocks, just pure JSON matching this schema: "
+                f"{json.dumps(schema)}"
             )
             full_prompt = prompt + schema_instruction
 
@@ -306,18 +406,149 @@ class GeminiProvider(BaseLLMProvider):
 
             # Try to extract JSON if wrapped in markdown code blocks
             if content.startswith("```"):
-                lines = content.split("\n")
-                if lines[0].startswith("```json"):
-                    lines = lines[1:]
-                if lines[-1] == "```":
-                    lines = lines[:-1]
-                content = "\n".join(lines)
+                import re
+                json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content, re.DOTALL)
+                if json_match:
+                    content = json_match.group(1).strip()
+            
+            # Find JSON object
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                content = content[start:end + 1]
 
             return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(f"Gemini structured response not valid JSON: {e}")
+            raise LLMProviderError(f"Gemini structured response not valid JSON: {e}") from e
         except Exception as e:
             logger.error(f"Gemini structured generation error: {e}")
             raise LLMProviderError(f"Gemini structured generation failed: {e}") from e
 
+    async def generate_structured_with_vision(
+        self,
+        prompt: str,
+        image_data: Union[bytes, "ImageInput", List["ImageInput"]],
+        schema: Dict[str, Any],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """
+        Generate structured output with vision using Gemini.
+        
+        Combines vision capabilities with JSON output instructions for deterministic structured output.
+        """
+        # Check if model supports vision
+        if not self.supports_vision():
+            logger.warning(
+                f"[WARN] Model {self.model} does not support vision! "
+                f"Falling back to text-only structured generation."
+            )
+            return await self.generate_structured(
+                prompt=prompt,
+                schema=schema,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                **kwargs,
+            )
+        
+        try:
+            # Normalize images to list of ImageInput
+            images = self._normalize_images(image_data)
+            
+            # Add JSON schema instruction to prompt
+            schema_instruction = (
+                f"\n\nYou MUST respond with valid JSON only. No markdown, no code blocks, just pure JSON matching this schema: "
+                f"{json.dumps(schema)}"
+            )
+            full_prompt = prompt + schema_instruction
+            
+            # Log request
+            start_time = self._log_llm_request(
+                "STRUCTURED_VISION", self.model,
+                f"{len(images)} images",
+                prompt=full_prompt, system_prompt=system_prompt or ""
+            )
+            
+            # Build parts with images and text
+            parts: List[Dict[str, Any]] = []
+            
+            for img in images:
+                if img.source_type == "bytes":
+                    img_base64 = base64.b64encode(img.data).decode("utf-8")
+                else:
+                    img_base64 = img.data
+                
+                parts.append({
+                    "inlineData": {
+                        "mimeType": img.media_type,
+                        "data": img_base64,
+                    }
+                })
+            
+            parts.append({"text": full_prompt})
+            
+            contents = [{"role": "user", "parts": parts}]
+            
+            payload: Dict[str, Any] = {"contents": contents}
+            
+            if system_prompt:
+                payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+            
+            generation_config: Dict[str, Any] = {"temperature": temperature}
+            if max_tokens:
+                generation_config["maxOutputTokens"] = max_tokens
+            payload["generationConfig"] = generation_config
+            
+            result = await self._make_request("generateContent", payload)
+            
+            # Extract response
+            content = ""
+            if result.get("candidates"):
+                candidate = result["candidates"][0]
+                if candidate.get("content", {}).get("parts"):
+                    content = candidate["content"]["parts"][0].get("text", "")
+            
+            usage_metadata = result.get("usageMetadata", {})
+            total_tokens = usage_metadata.get("totalTokenCount", 0)
+            self._log_llm_response("STRUCTURED_VISION", start_time, total_tokens, content)
+            
+            # Track usage at session level
+            llm_response = LLMResponse(
+                content=content,
+                model=self.model,
+                usage={
+                    "prompt_tokens": usage_metadata.get("promptTokenCount", 0),
+                    "completion_tokens": usage_metadata.get("candidatesTokenCount", 0),
+                    "total_tokens": total_tokens,
+                },
+            )
+            self._track_usage(llm_response)
+            
+            # Extract JSON from response
+            content = content.strip()
+            if content.startswith("```"):
+                import re
+                json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content, re.DOTALL)
+                if json_match:
+                    content = json_match.group(1).strip()
+            
+            # Find JSON object
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                content = content[start:end + 1]
+            
+            return json.loads(content)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Gemini structured vision response not valid JSON: {e}")
+            raise LLMProviderError(f"Gemini structured vision response not valid JSON: {e}") from e
+        except Exception as e:
+            logger.error(f"Gemini structured vision generation error: {e}")
+            raise LLMProviderError(f"Gemini structured vision generation failed: {e}") from e
 
     async def generate_with_tools(
         self,
@@ -504,35 +735,52 @@ class GeminiProvider(BaseLLMProvider):
             raise LLMProviderError(f"Gemini embeddings failed: {e}") from e
 
     def get_model_info(self) -> ModelInfo:
-        """Get information about the current Gemini model."""
-        capabilities = [
-            ModelCapability.TEXT_GENERATION,
-            ModelCapability.VISION,
-            ModelCapability.MULTI_IMAGE_VISION,
-            ModelCapability.STREAMING,
-            ModelCapability.TOOL_CALLING,
-            ModelCapability.STRUCTURED_OUTPUT,
-            ModelCapability.EMBEDDINGS,
-        ]
-
-        # Context window varies by model
-        context_window = 1000000  # Gemini 1.5+ supports 1M tokens
-        if "2.0" in self.model:
-            context_window = 1000000
-        elif "1.5" in self.model:
-            context_window = 1000000
+        """
+        Get information about the current Gemini model.
+        
+        Uses simple hardcoded values based on model name patterns.
+        """
+        # Use cached capabilities if available
+        if self._model_capabilities_cache is not None:
+            capabilities = self._model_capabilities_cache
         else:
-            context_window = 32768
-
+            capabilities = self._get_basic_capabilities()
+        
+        # Gemini always supports embeddings
+        if ModelCapability.EMBEDDINGS not in capabilities:
+            capabilities = capabilities + [ModelCapability.EMBEDDINGS]
+        
+        # Simple hardcoded pricing and context windows
+        model_lower = self.model.lower()
+        
+        if "2.0" in model_lower or "2-0" in model_lower:
+            context_window = 1000000
+            input_cost = 0.0  # Free tier
+            output_cost = 0.0
+        elif "1.5-pro" in model_lower:
+            context_window = 2000000
+            input_cost = 0.00125
+            output_cost = 0.005
+        elif "1.5" in model_lower:
+            context_window = 1000000
+            input_cost = 0.0  # Free tier
+            output_cost = 0.0
+        else:
+            context_window = 128000
+            input_cost = 0.0
+            output_cost = 0.0
+        
+        max_output = 8192
+        
         return ModelInfo(
             name=self.model,
             provider="gemini",
             capabilities=capabilities,
             context_window=context_window,
-            max_output_tokens=8192,
+            max_output_tokens=max_output,
             supports_system_prompt=True,
-            cost_per_1k_input_tokens=0.00025,  # Gemini Flash pricing
-            cost_per_1k_output_tokens=0.0005,
+            cost_per_1k_input_tokens=input_cost,
+            cost_per_1k_output_tokens=output_cost,
         )
 
 
