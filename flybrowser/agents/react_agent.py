@@ -61,6 +61,7 @@ from flybrowser.prompts import PromptManager
 from flybrowser.llm.base import ModelCapability
 from flybrowser.llm.conversation import ConversationManager
 from flybrowser.llm.token_budget import TokenEstimator
+from flybrowser.llm.context_compressor import ContextCompressor, CompressedContent, estimate_compression_benefit
 
 if TYPE_CHECKING:
     from flybrowser.core.page import PageController
@@ -163,8 +164,18 @@ class ReActAgent:
         """
         self.page = page_controller
         self.llm = llm_provider
-        self.memory = memory or AgentMemory()
         self.config = config or AgentConfig()
+        
+        # Initialize memory with config values if not provided
+        if memory is None:
+            self.memory = AgentMemory(
+                context_window_budget=self.config.memory.context_window_budget,
+                max_extraction_budget_percent=self.config.memory.max_extraction_budget_percent,
+                max_extraction_tokens=self.config.memory.max_extraction_tokens,
+                max_single_extraction_chars=self.config.memory.max_single_extraction_chars,
+            )
+        else:
+            self.memory = memory
         self.element_detector = element_detector
         self.approval_callback = approval_callback
         self.enable_autonomous_planning = enable_autonomous_planning
@@ -191,23 +202,26 @@ class ReActAgent:
         # Initialize prompt manager for template-based prompts
         self.prompt_manager = PromptManager()
 
-        # Initialize task planner with model capabilities and config
+        # Initialize conversation manager for multi-turn context handling
+        # This handles large content splitting and token budget management
+        # Created FIRST so it can be shared with other components
+        self.conversation = ConversationManager(
+            llm_provider=llm_provider,
+            model_info=self.model_info,
+            max_request_tokens=self.config.llm.max_request_tokens,
+        )
+        
+        # Initialize task planner with model capabilities, config, and shared ConversationManager
         self.planner = TaskPlanner(
             llm_provider,
             self.prompt_manager,
             model_capabilities=self.model_info.capabilities,
             config=self.config,
+            conversation_manager=self.conversation,  # Share for unified token tracking
         )
         
         # Initialize goal interpreter for fast-path execution
         self.goal_interpreter = GoalInterpreter()
-        
-        # Initialize conversation manager for multi-turn context handling
-        # This handles large content splitting and token budget management
-        self.conversation = ConversationManager(
-            llm_provider=llm_provider,
-            model_info=self.model_info,
-        )
         
         # Initialize page exploration components (optional)
         self._page_explorer = None
@@ -238,6 +252,17 @@ class ReActAgent:
             except ImportError as e:
                 logger.warning(f"Page exploration disabled: {e}")
 
+        # Initialize context compressor for intelligent memory management
+        # This compresses large extractions to preserve information without token overflow
+        self._context_compressor: Optional[ContextCompressor] = None
+        if self.config.memory.enable_intelligent_compression:
+            self._context_compressor = ContextCompressor(
+                llm_provider=llm_provider,
+                compression_temperature=0.1,
+                max_output_tokens=self.config.memory.max_compressed_summary_tokens,
+            )
+            logger.debug("Context compression enabled for memory management")
+        
         # Execution state
         self._state = ExecutionState.IDLE
         self._current_step: Optional[ReActStep] = None
@@ -383,6 +408,14 @@ class ReActAgent:
                 
                 # Reset parse failure counter on successful parse
                 self._consecutive_parse_failures = 0
+                
+                # Track conversation turn for context continuity
+                # This helps the agent maintain awareness of previous reasoning
+                self._track_conversation_turn(prompts["user"], response.content)
+                
+                # Periodic conversation cleanup to prevent budget exhaustion
+                # This proactively prunes history when budget drops below threshold
+                self.conversation.cleanup_if_needed(threshold_percent=0.15)
 
                 # Create step record
                 step = ReActStep(
@@ -504,6 +537,10 @@ class ReActAgent:
                     while not self._should_stop(iteration):
                         iteration += 1
                         self._state = ExecutionState.THINKING
+                        
+                        # Periodic conversation cleanup at start of each iteration
+                        # This ensures budget is available before we build prompts
+                        self.conversation.cleanup_if_needed(threshold_percent=0.15)
 
                         # Try fast-path: check if goal can be directly mapped to action
                         # ONLY on first iteration - after that, use LLM reasoning
@@ -539,6 +576,10 @@ class ReActAgent:
 
                             # Parse response
                             parse_result = self.parser.parse(response.content)
+                            
+                            # Track conversation turn for context continuity (only for LLM path)
+                            if parse_result.success:
+                                self._track_conversation_turn(prompts["user"], response.content)
 
                         if not parse_result.success:
                             self._consecutive_failures += 1
@@ -1121,8 +1162,11 @@ class ReActAgent:
         
         If the context would exceed token limits, this method:
         1. Identifies large extraction data
-        2. Uses ConversationManager to process it in chunks
-        3. Returns a condensed summary suitable for the prompt
+        2. Uses intelligent truncation with head/tail preservation
+        3. Returns a condensed context suitable for the prompt
+        
+        The ConversationManager's token budget is used for limit checking,
+        ensuring consistency with the conversation system.
         
         Args:
             memory_context: Raw memory context from format_for_prompt()
@@ -1207,6 +1251,222 @@ class ReActAgent:
         logger.info(f"Truncated context from {context_tokens} to ~{TokenEstimator.estimate(result).tokens} tokens")
         return result
 
+    async def _process_large_extraction_with_conversation(
+        self,
+        large_content: str,
+        task: str,
+        schema: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Process large extraction content using ConversationManager's multi-turn protocol.
+        
+        This method leverages the ConversationManager to handle content that exceeds
+        token limits by splitting it into chunks and using the accumulation protocol.
+        
+        Args:
+            large_content: The large content to process (e.g., page extraction)
+            task: The task instruction (what to do with the content)
+            schema: JSON schema for the structured response
+            
+        Returns:
+            Structured response from the multi-turn processing
+        """
+        from flybrowser.llm.token_budget import ContentType
+        
+        # Detect content type for optimal chunking
+        content_type = None
+        if '<html' in large_content.lower() or '<body' in large_content.lower():
+            content_type = ContentType.HTML
+        elif large_content.strip().startswith('{') or large_content.strip().startswith('['):
+            content_type = ContentType.JSON
+        else:
+            content_type = ContentType.TEXT
+        
+        logger.info(
+            f"Processing large content ({len(large_content)} chars) with "
+            f"ConversationManager multi-turn protocol (type: {content_type.value})"
+        )
+        
+        # Use ConversationManager's send_with_large_content for multi-turn processing
+        result = await self.conversation.send_with_large_content(
+            content=large_content,
+            instruction=task,
+            schema=schema,
+            temperature=self.config.llm.reasoning_temperature,
+            content_type=content_type,
+        )
+        
+        logger.info(
+            f"Multi-turn processing complete. Stats: {self.conversation.get_stats()}"
+        )
+        
+        return result
+    
+    async def _compress_extraction_data(
+        self,
+        data: Any,
+        tool_name: str,
+        task_context: str,
+        compression_tier: int = 2,  # Default to session tier
+    ) -> CompressedContent:
+        """
+        Compress large extraction data using the ContextCompressor.
+        
+        This preserves essential information from large extractions while
+        reducing token count to prevent context window overflow.
+        
+        Uses state-of-the-art compression with:
+        - Content-type auto-detection for schema selection
+        - Page context for relevance
+        - URL validation to prevent navigation target loss
+        - Hierarchical compression tiers
+        
+        Args:
+            data: The extraction data (dict, list, or string)
+            tool_name: Name of the tool that produced the extraction
+            task_context: Current task context for relevance-aware compression
+            compression_tier: Hierarchical tier (1=recent, 2=session, 3=archival)
+            
+        Returns:
+            CompressedContent with summary, key facts, and web automation fields
+        """
+        if not self._context_compressor:
+            raise RuntimeError("Context compressor not initialized")
+        
+        # Get current page context for compression
+        page_url = self.memory.working.get_scratch("current_url") or ""
+        page_title = self.memory.working.get_scratch("current_title") or ""
+        
+        # Determine what keys are most important to preserve based on tool
+        preserve_keys = None
+        if tool_name == "extract_text":
+            preserve_keys = ["title", "url", "headings", "navigation_links", "footer_links"]
+        elif tool_name == "evaluate_javascript":
+            # Preserve any keys that look like data values
+            preserve_keys = None  # Let LLM decide
+        elif tool_name in ("extract_data", "extract_structured_data"):
+            preserve_keys = None  # Preserve all structured data values
+        elif tool_name == "get_page_content":
+            preserve_keys = ["text", "url", "title"]
+        
+        # Auto-detect content type based on tool - let compressor refine from data
+        from flybrowser.llm.context_compressor import ContentType
+        content_type = None  # Let compressor auto-detect
+        
+        # Hint content type from tool name for better detection
+        if tool_name in ("search", "search_human", "search_api", "search_rank"):
+            content_type = ContentType.SEARCH_RESULTS
+        elif tool_name == "get_page_state":
+            content_type = ContentType.PAGE_STATE
+        elif tool_name == "extract_text":
+            content_type = ContentType.TEXT_CONTENT
+        
+        compressed = await self._context_compressor.compress_extraction(
+            large_data=data,
+            task_context=task_context,
+            preserve_keys=preserve_keys,
+            content_type=content_type,
+            page_url=page_url,
+            page_title=page_title,
+            validate_urls=True,  # Always validate URL preservation
+            compression_tier=compression_tier,
+        )
+        
+        return compressed
+    
+    async def _cleanup_old_raw_extractions(self, keep_recent: int = 2) -> int:
+        """
+        Clean up old raw extraction data from working memory.
+        
+        When compression is enabled, we keep raw data for immediate use but
+        need to clean up older raw extractions to prevent memory bloat.
+        Compressed versions are kept as they are much smaller.
+        
+        Args:
+            keep_recent: Number of recent raw extractions to keep
+            
+        Returns:
+            Number of raw extractions removed
+        """
+        # Find all extraction keys (excluding compressed versions)
+        extraction_keys = [
+            key for key in self.memory.working._scratch_pad.keys()
+            if key.startswith("extracted_") and not key.endswith("_compressed")
+        ]
+        
+        if len(extraction_keys) <= keep_recent:
+            return 0
+        
+        # Sort by timestamp (key format: extracted_toolname_timestamp)
+        def get_timestamp(key: str) -> int:
+            parts = key.rsplit("_", 1)
+            try:
+                return int(parts[-1])
+            except (ValueError, IndexError):
+                return 0
+        
+        sorted_keys = sorted(extraction_keys, key=get_timestamp, reverse=True)
+        
+        # Keep the most recent ones, remove older raw data
+        # but ONLY if they have a compressed version
+        keys_to_remove = sorted_keys[keep_recent:]
+        removed_count = 0
+        
+        for key in keys_to_remove:
+            compressed_key = f"{key}_compressed"
+            # Only remove raw if compressed version exists
+            if compressed_key in self.memory.working._scratch_pad:
+                del self.memory.working._scratch_pad[key]
+                removed_count += 1
+                logger.debug(f"Cleaned up old raw extraction: {key} (compressed version retained)")
+        
+        if removed_count > 0:
+            logger.info(
+                f"[MemoryCleanup] Removed {removed_count} old raw extractions "
+                f"(compressed versions retained, {keep_recent} most recent raw kept)"
+            )
+        
+        return removed_count
+
+    def _track_conversation_turn(self, user_content: str, assistant_content: str) -> None:
+        """
+        Record a conversation turn in the ConversationManager history.
+        
+        This maintains context across ReAct iterations, allowing the agent
+        to reference previous turns when reasoning about the task.
+        
+        Args:
+            user_content: The prompt sent to the LLM
+            assistant_content: The LLM's response
+        """
+        # Only track if conversation manager is configured to maintain history
+        # Skip if content is too large (would blow up history budget)
+        user_tokens = TokenEstimator.estimate(user_content).tokens
+        assistant_tokens = TokenEstimator.estimate(assistant_content).tokens
+        
+        # Skip tracking if either side is very large (>10K tokens)
+        max_turn_tokens = 10000
+        if user_tokens > max_turn_tokens or assistant_tokens > max_turn_tokens:
+            logger.debug(
+                f"Skipping conversation turn tracking (user: {user_tokens}, "
+                f"assistant: {assistant_tokens} tokens > {max_turn_tokens} max)"
+            )
+            return
+        
+        # Add to conversation history
+        self.conversation.add_user_message(user_content)
+        self.conversation.add_assistant_message(assistant_content)
+        
+        # Prune history if it's getting too large
+        available = self.conversation.get_available_tokens()
+        if available < 5000:  # Less than 5K tokens available
+            removed = self.conversation.history.prune_to_fit(
+                self.conversation.max_history_tokens, 
+                keep_recent=4  # Keep at least 4 recent messages
+            )
+            if removed > 0:
+                logger.debug(f"Pruned {removed} messages from conversation history")
+
     def _build_prompt(self, task: str) -> Dict[str, str]:
         """
         Build the prompts for LLM with task and context using PromptManager.
@@ -1230,10 +1490,40 @@ class ReActAgent:
         # Get available tools description
         tools_prompt = self.tool_registry.generate_tools_prompt()
         
-        # Get plan context if available
+        # Get plan context if available, including what data is already extracted
         plan_context = ""
         if self._current_plan:
-            plan_context = self._current_plan.format_for_prompt()
+            # Gather available extracted data keys to prevent redundant work
+            available_data = []
+            completed_actions = []
+            
+            if self.memory and hasattr(self.memory, 'working'):
+                # Get extraction keys (excluding compressed versions)
+                for key in self.memory.working._scratch_pad.keys():
+                    if key.startswith("extracted_") and not key.endswith("_compressed"):
+                        available_data.append(key)
+            
+            # Get completed actions from short-term memory
+            if self.memory and hasattr(self.memory, 'short_term'):
+                # Use get_recent() method instead of direct _entries access
+                recent_entries = self.memory.short_term.get_recent(10)
+                for entry in recent_entries:
+                    if entry.outcome == ExecutionOutcome.SUCCESS:
+                        action_desc = f"{entry.action.tool_name}"
+                        if entry.action.tool_name == "navigate":
+                            url = entry.action.parameters.get("url", "")
+                            action_desc = f"navigate to {url[:50]}..."
+                        elif entry.action.tool_name == "extract_text":
+                            action_desc = "extracted text from page"
+                        elif entry.action.tool_name == "search":
+                            query = entry.action.parameters.get("query", "")
+                            action_desc = f"searched for '{query}'"
+                        completed_actions.append(action_desc)
+            
+            plan_context = self._current_plan.format_for_prompt(
+                available_data=available_data if available_data else None,
+                completed_actions=completed_actions if completed_actions else None,
+            )
         
         # Select prompt template based on reasoning strategy
         prompt_name = self._select_prompt_for_strategy()
@@ -1325,16 +1615,18 @@ class ReActAgent:
         iteration: int,
     ) -> Any:
         """
-        Generate LLM response with optional vision integration using STRUCTURED OUTPUT.
+        Generate LLM response with optional vision using ConversationManager.
+        
+        ALL LLM interactions go through the ConversationManager to ensure:
+        - Consistent token tracking and budget management
+        - Conversation history preservation
+        - Proper logging and statistics
         
         ALWAYS uses structured output (JSON mode) for deterministic response format.
         This eliminates parsing errors and ensures consistent action/thought extraction.
         
         Includes automatic repair mechanism: if the LLM returns malformed JSON that
         doesn't match the schema, we ask the LLM to fix it using the original context.
-        
-        For vision-enabled models, conditionally captures and includes screenshots.
-        For text-only models, uses standard structured text generation.
         
         Args:
             prompts: System and user prompts
@@ -1354,6 +1646,11 @@ class ReActAgent:
         
         max_repair_attempts = self.config.llm.max_repair_attempts
         
+        # ALWAYS set the ReAct agent's system prompt
+        # This is critical because the conversation may have been used by the planner
+        # with a different system prompt. The ReAct agent needs its own prompt.
+        self.conversation.set_system_prompt(prompts["system"])
+        
         # Check if vision should be used
         if self._should_use_vision(iteration):
             try:
@@ -1363,7 +1660,10 @@ class ReActAgent:
                 
                 # Capture screenshot
                 screenshot_bytes = await self.page.screenshot(full_page=False)
-                logger.info(f"[VISION] Captured screenshot ({len(screenshot_bytes) // 1024}KB) for iteration {iteration}")
+                logger.info(
+                    f"[VISION] Captured screenshot ({len(screenshot_bytes) // 1024}KB) "
+                    f"for iteration {iteration}"
+                )
                 
                 # Calculate max_tokens dynamically based on image size and prompts
                 if self.config.llm.enable_dynamic_tokens:
@@ -1375,13 +1675,14 @@ class ReActAgent:
                         context_tokens=0,
                         safety_margin=self.config.llm.token_safety_margin
                     )
-                    logger.info(f"[VISION] Dynamically calculated max_tokens={max_tokens} "
-                               f"(image: {len(screenshot_bytes)//1024}KB, margin: {self.config.llm.token_safety_margin})")
+                    logger.debug(
+                        f"[VISION] Dynamically calculated max_tokens={max_tokens} "
+                        f"(image: {len(screenshot_bytes)//1024}KB)"
+                    )
                 else:
                     max_tokens = getattr(self.config.llm, 'reasoning_vision_max_tokens', None)
                     if max_tokens is None:
                         max_tokens = max(2048, self.config.llm.reasoning_max_tokens * 2)
-                logger.debug(f"[VISION] Using max_tokens={max_tokens}")
                 
                 # Further increase for ToT strategy
                 if self.config.reasoning_strategy == ReasoningStrategy.TREE_OF_THOUGHT:
@@ -1393,19 +1694,14 @@ class ReActAgent:
                     logger.error("[VISION] Screenshot is empty! Falling back to text-only")
                     raise ValueError("Empty screenshot")
                 
-                logger.debug(
-                    f"[VISION] Sending structured request: "
-                    f"image={len(screenshot_bytes)//1024}KB, max_tokens={max_tokens}"
-                )
-                
-                # ALWAYS use structured output with vision
-                structured_data = await self.llm.generate_structured_with_vision(
-                    prompt=prompts["user"],
+                # Use ConversationManager for vision request
+                structured_data = await self.conversation.send_structured_with_vision(
+                    content=prompts["user"],
                     image_data=screenshot_bytes,
                     schema=REACT_RESPONSE_SCHEMA,
-                    system_prompt=prompts["system"],
                     temperature=self.config.llm.reasoning_temperature,
                     max_tokens=max_tokens,
+                    add_to_history=False,  # We handle history tracking separately
                 )
                 
                 # Check for error in response
@@ -1428,7 +1724,7 @@ class ReActAgent:
                 logger.warning(f"[VISION] Failed: {e}, falling back to text-only structured")
                 # Fall through to text-only structured generation
         
-        # Text-only structured generation
+        # Text-only structured generation via ConversationManager
         if self.config.llm.enable_dynamic_tokens:
             from flybrowser.agents.config import calculate_max_tokens_for_response, estimate_tokens
             system_tokens = estimate_tokens(prompts["system"])
@@ -1442,19 +1738,19 @@ class ReActAgent:
             logger.debug(f"[TEXT] Calculated max_tokens={max_tokens}")
         else:
             max_tokens = self.config.llm.reasoning_max_tokens
-            logger.debug(f"[TEXT] Using configured max_tokens={max_tokens}")
         
         if self.config.reasoning_strategy == ReasoningStrategy.TREE_OF_THOUGHT:
             max_tokens = max(max_tokens, 4096)
             logger.debug(f"[ToT] Increased to {max_tokens}")
         
-        # ALWAYS use structured output for text
-        logger.debug("[TEXT] Using structured output with JSON mode")
-        structured_data = await self.llm.generate_structured(
-            prompt=prompts["user"],
+        # Use ConversationManager for text request
+        logger.debug("[TEXT] Using ConversationManager for structured output")
+        structured_data = await self.conversation.send_structured(
+            content=prompts["user"],
             schema=REACT_RESPONSE_SCHEMA,
-            system_prompt=prompts["system"],
             temperature=self.config.llm.reasoning_temperature,
+            max_tokens=max_tokens,
+            add_to_history=False,  # We handle history tracking separately
         )
         
         # Validate and repair if needed
@@ -1566,11 +1862,16 @@ class ReActAgent:
             
             # Build repair prompt with context
             malformed_output = json.dumps(structured_data, indent=2)
+            
+            # Get available tools list to guide the LLM during repair
+            available_tools = self.tool_registry.list_tools() if self.tool_registry else None
+            
             repair_prompt = build_repair_prompt(
                 original_prompt=original_prompt,
                 malformed_output=malformed_output,
                 validation_errors=errors,
                 schema=REACT_RESPONSE_SCHEMA,
+                available_tools=available_tools,
             )
             
             # Ask LLM to repair (use lower temperature for more deterministic fix)
@@ -1799,7 +2100,8 @@ class ReActAgent:
                 detector = ObstacleDetector(
                     page=self.page.page,  # Get underlying Playwright page
                     llm=self.llm,
-                    config=obstacle_config
+                    config=obstacle_config,
+                    conversation_manager=self.conversation,  # Share for unified token tracking
                 )
                 setattr(self, detector_key, detector)
             else:
@@ -1965,21 +2267,37 @@ class ReActAgent:
                     f"Dangerous action '{action.tool_name}' requires approval but no callback provided"
                 )
 
-        # Execute the tool
+        # Execute the tool with automatic parameter validation
         self._state = ExecutionState.ACTING
         try:
-            # Execute tool with parameters as kwargs
-            result = await tool.execute(**action.parameters)
+            # Use execute_safe() for automatic parameter validation and error handling
+            result = await tool.execute_safe(**action.parameters)
 
             self._state = ExecutionState.OBSERVING
             
-            # Store current URL in memory after successful navigation
+            # Store current URL and page title in memory after successful navigation
             if result.success and action.tool_name in ("navigate", "goto"):
                 try:
                     current_url = await self.page.get_url()
                     if current_url:
                         self.memory.working.set_scratch("current_url", current_url)
                         logger.debug(f"Stored current URL: {current_url}")
+                    
+                    # Also store page title - helps agent understand what page it's on
+                    try:
+                        current_title = await self.page.get_title()
+                        if current_title:
+                            self.memory.working.set_scratch("current_title", current_title)
+                            logger.debug(f"Stored current title: {current_title}")
+                    except Exception as e:
+                        logger.debug(f"Could not get page title: {e}")
+                    
+                    # UNIFIED PAGE EXPLORATION: Works for both vision and text-only modes
+                    # - Vision mode: Creates PageMap with screenshots + VLM analysis
+                    # - Text mode: Creates PageMap with DOM analysis only
+                    # Both modes update SitemapGraph for multi-page exploration tracking
+                    if self._should_explore_page(self._current_task or ""):
+                        await self._explore_current_page()
                     
                     # Store obstacle handling info to prevent VLM hallucination
                     # (VLM might think cookie banners are still there after dismissal)
@@ -2000,15 +2318,90 @@ class ReActAgent:
             # Store extraction results in working memory for persistence
             # This is CRITICAL for text-only mode to have actual data available
             # across LLM reasoning iterations (prevents hallucination)
-            if result.success and action.tool_name in (
+            #
+            # CRITICAL DATA CLASSIFICATION:
+            # - NEVER compress: search results, page state, attributes (contain URLs/selectors)
+            # - SAFE to compress: text extractions, JS results (large content, summaries OK)
+            #
+            # Tools that return URLs/selectors/IDs that agent needs for navigation:
+            is_url_critical = action.tool_name in (
+                "search", "search_human", "search_api", "search_rank",  # Search URLs
+                "get_page_state",  # Navigation links, buttons, selectors
+                "get_attribute",   # href, src, data-* attributes
+            )
+            # Tools that return large content that can be summarized:
+            is_compressible_extraction = action.tool_name in (
                 "evaluate_javascript", "extract_text", "extract_data", 
                 "extract_structured_data", "get_page_content"
-            ):
+            )
+            is_extraction = is_url_critical or is_compressible_extraction
+            if result.success and is_extraction:
                 if result.data:
                     # Use a timestamped key to avoid overwriting previous extractions
                     key = f"extracted_{action.tool_name}_{int(time.time())}"
+                    
+                    # Check if intelligent compression should be applied
+                    data_str = str(result.data)
+                    data_size = len(data_str)
+                    
+                    # ALWAYS store raw data first - agent needs it for current reasoning
                     self.memory.working.set_scratch(key, result.data)
-                    logger.info(f"Stored extraction result in working memory: {key}")
+                    
+                    # Use intelligent compression for large extractions
+                    # This creates a compressed version for FUTURE iterations
+                    # The raw version stays available for the CURRENT iteration
+                    #
+                    # COMPRESSION RULES:
+                    # - NEVER compress URL-critical data (search results, page state, attributes)
+                    # - OK to compress: large text extractions, JS results
+                    compression_threshold_chars = self.config.memory.compression_threshold_tokens * 4
+                    should_compress = (
+                        self.config.memory.enable_intelligent_compression and 
+                        data_size > compression_threshold_chars and
+                        self._context_compressor is not None and
+                        is_compressible_extraction and  # Only compress safe content
+                        not is_url_critical  # NEVER compress URL-critical data!
+                    )
+                    if should_compress:
+                        try:
+                            # Get task context - try multiple sources
+                            task_context = (
+                                self._current_task or 
+                                self.memory.working.current_goal or 
+                                ""
+                            )
+                            
+                            # Compress the extraction to preserve key info
+                            compressed = await self._compress_extraction_data(
+                                result.data,
+                                action.tool_name,
+                                task_context
+                            )
+                            # Store compressed version alongside raw
+                            self.memory.working.set_scratch(f"{key}_compressed", compressed.to_dict())
+                            logger.info(
+                                f"Stored extraction with compression: {key} "
+                                f"({compressed.original_size_tokens:,} → {compressed.compressed_size_tokens:,} tokens)"
+                            )
+                            
+                            # Clean up old raw extractions if we're accumulating too much
+                            # Keep only the 2 most recent raw extractions to save memory
+                            await self._cleanup_old_raw_extractions(keep_recent=2)
+                            
+                        except Exception as e:
+                            logger.warning(f"Compression failed, raw data stored: {e}")
+                    else:
+                        logger.info(f"Stored extraction result in working memory: {key}")
+                    
+                    # Large extractions can impact conversation budget
+                    # Trigger cleanup if extraction is large (>8KB)
+                    if data_size > 8000:
+                        pruned = self.conversation.cleanup_if_needed(threshold_percent=0.20)
+                        if pruned > 0:
+                            logger.debug(
+                                f"[ConversationCleanup] Pruned {pruned} messages after large "
+                                f"extraction ({data_size:,} chars)"
+                            )
             
             if result.success:
                 self._consecutive_failures = 0  # Reset on success
@@ -2178,9 +2571,9 @@ class ReActAgent:
         """
         Determine if current page should be explored after navigation.
         
-        ALWAYS explores when vision is enabled to build complete PageMap context.
-        This ensures the agent has comprehensive page understanding (sections,
-        navigation, content structure) before planning actions.
+        Page exploration builds PageMap context for the agent:
+        - Vision mode: Screenshots + DOM analysis + VLM understanding
+        - Text mode: DOM analysis only (no screenshots, but still useful structure)
         
         The operation mode affects HOW we explore (depth/scope), not WHETHER we explore.
         Exploration scope is determined by the mode:
@@ -2193,23 +2586,28 @@ class ReActAgent:
             task: Task description (not used for decision, kept for compatibility)
             
         Returns:
-            True if page exploration should be triggered (always when vision enabled)
+            True if page exploration should be triggered
         """
-        # Must have explorer and analyzer initialized (vision-capable models only)
-        if not self._page_explorer or not self._page_analyzer:
-            return False
+        # Check if we're in site exploration mode - always explore for multi-page tasks
+        if self._is_site_exploration:
+            has_vision = ModelCapability.VISION in self.model_info.capabilities
+            mode_desc = "vision" if has_vision else "text-only DOM"
+            logger.debug(
+                f"[PageExploration:{self.operation_mode.value}] Site exploration mode - "
+                f"building PageMap with {mode_desc} analysis"
+            )
+            return True
         
-        # Vision capability is required for page exploration
-        if ModelCapability.VISION not in self.model_info.capabilities:
-            logger.debug("[PageExploration] Skipped - vision capability required")
-            return False
+        # For non-exploration tasks, vision mode uses full exploration
+        if ModelCapability.VISION in self.model_info.capabilities:
+            if self._page_explorer and self._page_analyzer:
+                logger.debug(
+                    f"[PageExploration:{self.operation_mode.value}] Enabled - "
+                    f"building PageMap with {self._get_exploration_scope_description()} scope"
+                )
+                return True
         
-        # ALWAYS explore when vision is enabled - mode just affects depth/scope
-        logger.debug(
-            f"[PageExploration:{self.operation_mode.value}] Enabled - "
-            f"building PageMap with {self._get_exploration_scope_description()} scope"
-        )
-        return True
+        return False
     
     def _get_exploration_scope_description(self) -> str:
         """Get human-readable description of exploration scope for current mode."""
@@ -2226,6 +2624,10 @@ class ReActAgent:
         """
         Perform systematic page exploration and store understanding in memory.
         
+        Supports both vision and text-only modes:
+        - Vision: Screenshots + VLM analysis for rich understanding
+        - Text-only: DOM analysis for navigation links and structure
+        
         Returns:
             True if exploration succeeded, False otherwise
         """
@@ -2241,6 +2643,13 @@ class ReActAgent:
                 logger.info(f"PageMap already exists for {current_url}")
                 return True
             
+            has_vision = ModelCapability.VISION in self.model_info.capabilities
+            
+            # TEXT-ONLY MODE: Create PageMap from DOM analysis (no screenshots)
+            if not has_vision:
+                return await self._explore_current_page_text_mode(current_url)
+            
+            # VISION MODE: Full exploration with screenshots
             # Execute page exploration with mode-specific scope
             # Mode determines exploration depth: NAVIGATE=FULL, EXECUTE=VIEWPORT, etc.
             logger.info(
@@ -2305,6 +2714,193 @@ class ReActAgent:
         except Exception as e:
             logger.exception(f"Page exploration failed: {e}")
             return False
+    
+    async def _explore_current_page_text_mode(self, current_url: str) -> bool:
+        """
+        Create PageMap using DOM analysis only (no screenshots).
+        
+        This enables text-only mode to have structured page understanding
+        including navigation links, page sections, and content structure.
+        
+        Args:
+            current_url: Current page URL
+            
+        Returns:
+            True if exploration succeeded
+        """
+        from flybrowser.agents.page_map import PageMap, ViewportInfo, PageSection, SectionType
+        
+        try:
+            logger.info(f"[PageExplorer:TextMode] Starting DOM-based exploration of {current_url}")
+            
+            # Get page dimensions
+            dimensions = await self.page.evaluate("""
+                () => {
+                    return {
+                        viewportWidth: window.innerWidth,
+                        viewportHeight: window.innerHeight,
+                        totalWidth: Math.max(
+                            document.body.scrollWidth || 0,
+                            document.documentElement.scrollWidth || 0
+                        ),
+                        totalHeight: Math.max(
+                            document.body.scrollHeight || 0,
+                            document.documentElement.scrollHeight || 0
+                        ),
+                        devicePixelRatio: window.devicePixelRatio || 1
+                    };
+                }
+            """)
+            
+            # Get page title
+            title = await self.page.get_title() or "Untitled"
+            
+            # Extract DOM links and structure
+            dom_data = await self._extract_dom_data_for_page_map()
+            
+            # Create PageMap with DOM data (no screenshots)
+            page_map = PageMap(
+                url=current_url,
+                title=title,
+                viewport=ViewportInfo(
+                    width=dimensions.get('viewportWidth', 1280),
+                    height=dimensions.get('viewportHeight', 800),
+                    device_pixel_ratio=dimensions.get('devicePixelRatio', 1.0)
+                ),
+                total_height=dimensions.get('totalHeight', 0),
+                total_width=dimensions.get('totalWidth', 0),
+                screenshots=[],  # No screenshots in text mode
+                dom_navigation_links=dom_data.get('links', {}),
+                analysis_complete=True,
+                metadata={'mode': 'text_only', 'dom_extracted': True}
+            )
+            
+            # Add sections from DOM structure
+            sections = dom_data.get('sections', [])
+            for section_data in sections:
+                try:
+                    section = PageSection(
+                        type=SectionType(section_data.get('type', 'content')),
+                        name=section_data.get('name', ''),
+                        description=section_data.get('description', ''),
+                        scroll_range={'start_y': 0, 'end_y': 0},
+                        screenshot_indices=[],
+                        navigation_links=section_data.get('links', [])
+                    )
+                    page_map.sections.append(section)
+                except Exception:
+                    continue
+            
+            # Generate summary from page content
+            page_map.summary = dom_data.get('summary', f"Page: {title}")
+            
+            # Store PageMap in memory
+            self.memory.store_page_map(current_url, page_map)
+            
+            logger.info(
+                f"[PageExplorer:TextMode] DOM exploration complete: "
+                f"{len(page_map.sections)} sections, "
+                f"{len(dom_data.get('links', {}).get('all_links', []))} links"
+            )
+            
+            # Update sitemap if in site exploration mode
+            if self._is_site_exploration:
+                if not self.memory.has_sitemap_graph():
+                    await self._analyze_and_init_sitemap_with_context_async(current_url, page_map)
+                await self._update_sitemap_after_navigation_async(current_url, page_map)
+            
+            return True
+            
+        except Exception as e:
+            logger.warning(f"[PageExplorer:TextMode] DOM exploration failed: {e}")
+            return False
+    
+    async def _extract_dom_data_for_page_map(self) -> Dict[str, Any]:
+        """
+        Extract comprehensive DOM data for PageMap construction in text-only mode.
+        
+        Returns:
+            Dictionary with 'links', 'sections', and 'summary' data
+        """
+        try:
+            dom_data = await self.page.evaluate("""
+                () => {
+                    const origin = window.location.origin;
+                    const results = {
+                        links: { all_links: [], interactive_elements: [] },
+                        sections: [],
+                        summary: ''
+                    };
+                    
+                    // Extract all anchor elements
+                    const allLinks = Array.from(document.querySelectorAll('a[href]'))
+                        .map(a => {
+                            const href = a.href || '';
+                            const text = (a.innerText || a.textContent || '').trim().substring(0, 100);
+                            const ariaLabel = a.getAttribute('aria-label') || '';
+                            
+                            // Skip empty or special links
+                            if (!href || href.startsWith('javascript:') || href.startsWith('#')) return null;
+                            if (!text && !ariaLabel) return null;
+                            
+                            return {
+                                text: text || ariaLabel,
+                                href: href,
+                                ariaLabel: ariaLabel,
+                                isInternal: href.startsWith(origin) || href.startsWith('/'),
+                                isVisible: a.offsetParent !== null,
+                                parentTag: a.parentElement?.tagName?.toLowerCase() || ''
+                            };
+                        })
+                        .filter(l => l !== null);
+                    
+                    results.links.all_links = allLinks.slice(0, 100);  // Limit to 100 links
+                    
+                    // Extract page sections based on semantic HTML
+                    const sectionElements = [
+                        { selector: 'header, [role="banner"]', type: 'header', name: 'Header' },
+                        { selector: 'nav, [role="navigation"]', type: 'navigation', name: 'Navigation' },
+                        { selector: 'main, [role="main"]', type: 'content', name: 'Main Content' },
+                        { selector: 'footer, [role="contentinfo"]', type: 'footer', name: 'Footer' },
+                        { selector: 'aside, [role="complementary"]', type: 'sidebar', name: 'Sidebar' }
+                    ];
+                    
+                    for (const sec of sectionElements) {
+                        const el = document.querySelector(sec.selector);
+                        if (el) {
+                            // Get links within this section
+                            const sectionLinks = Array.from(el.querySelectorAll('a[href]'))
+                                .map(a => ({
+                                    text: (a.innerText || '').trim().substring(0, 50),
+                                    href: a.href
+                                }))
+                                .filter(l => l.text && l.href)
+                                .slice(0, 20);
+                            
+                            results.sections.push({
+                                type: sec.type,
+                                name: sec.name,
+                                description: (el.innerText || '').substring(0, 200).trim(),
+                                links: sectionLinks
+                            });
+                        }
+                    }
+                    
+                    // Generate page summary from meta and headings
+                    const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
+                    const h1 = document.querySelector('h1')?.innerText || '';
+                    const title = document.title || '';
+                    results.summary = metaDesc || h1 || title || 'Page content';
+                    
+                    return results;
+                }
+            """)
+            
+            return dom_data or {'links': {'all_links': []}, 'sections': [], 'summary': ''}
+            
+        except Exception as e:
+            logger.warning(f"[PageExplorer:TextMode] DOM data extraction failed: {e}")
+            return {'links': {'all_links': []}, 'sections': [], 'summary': ''}
     
     async def _should_trigger_parallel_exploration(self) -> bool:
         """
