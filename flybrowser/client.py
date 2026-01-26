@@ -623,6 +623,7 @@ class FlyBrowserClient:
         session_id: str,
         instruction: str,
         use_vision: bool = True,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Navigate using natural language.
 
@@ -630,6 +631,7 @@ class FlyBrowserClient:
             session_id: Session ID
             instruction: Natural language navigation instruction
             use_vision: Whether to use vision for element detection
+            context: Additional context (conditions, constraints)
 
         Returns:
             Navigation result
@@ -638,7 +640,7 @@ class FlyBrowserClient:
             "POST",
             f"/sessions/{session_id}/navigate-nl",
             base_url=self._get_session_url(session_id),
-            json={"instruction": instruction, "use_vision": use_vision},
+            json={"instruction": instruction, "use_vision": use_vision, "context": context or {}},
         ) or {}
 
     async def mask_pii(self, text: str) -> Dict[str, Any]:

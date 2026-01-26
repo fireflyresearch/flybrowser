@@ -999,24 +999,55 @@ class FlyBrowser:
         self._ensure_started()
 
         if self._mode == "server":
-            return await self._client.navigate(self._session_id, instruction)
+            return await self._client.navigate_nl(self._session_id, instruction, context=context or {})
 
         # Embedded mode: Use ReAct framework with NAVIGATE mode
         from flybrowser.agents.types import OperationMode
+        
+        logger.info(f"[navigate] Navigation: {instruction[:100]}...")
+        
+        # CRITICAL: Store current page context and user context in agent memory BEFORE execution
+        try:
+            current_url = await self.page_controller.get_url()
+            current_title = await self.page_controller.get_title()
+            if current_url:
+                self.react_agent.memory.working.set_scratch("current_url", current_url)
+                self.react_agent.memory.working.set_scratch("current_title", current_title or "")
+                logger.debug(f"[navigate] Page context: {current_url} - {current_title}")
+            
+            # Store user-provided context for tool access (convert to dict if ActionContext)
+            if context:
+                from flybrowser.agents.context import ActionContext, ContextValidator
+                
+                # Convert ActionContext to dict if needed
+                context_dict = context.to_dict() if isinstance(context, ActionContext) else context
+                
+                # Validate context if it's an ActionContext instance
+                if isinstance(context, ActionContext):
+                    is_valid, errors = ContextValidator.validate(context)
+                    if not is_valid:
+                        logger.warning(f"[navigate] Context validation warnings: {'; '.join(errors)}")
+                
+                self.react_agent.memory.working.set_scratch("user_context", context_dict)
+                logger.debug(f"[navigate] User context: {list(context_dict.keys())}")
+        except Exception as e:
+            logger.debug(f"[navigate] Could not get page context: {e}")
+        
+        # Execute navigation
         result_dict = await self.react_agent.execute_task(
             instruction,
             max_iterations=10,
             operation_mode=OperationMode.NAVIGATE,
         )
         
-        # Get current page state
-        current_url = await self.page_controller.get_url()
-        current_title = await self.page_controller.get_title()
+        # Get current page state after navigation
+        final_url = await self.page_controller.get_url()
+        final_title = await self.page_controller.get_title()
         
         return {
             "success": result_dict.get("success", False),
-            "url": current_url,
-            "title": current_title,
+            "url": final_url,
+            "title": final_title,
             "navigation_type": "react",
             "error": result_dict.get("error"),
         }

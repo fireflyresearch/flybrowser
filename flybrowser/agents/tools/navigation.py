@@ -40,15 +40,65 @@ class NavigateTool(BaseTool):
     
     @property
     def metadata(self) -> ToolMetadata:
-        return get_tool_metadata("navigate")
+        # Get base metadata from centralized descriptions
+        base_metadata = get_tool_metadata("navigate")
+        # Add context support
+        base_metadata.expected_context_types = ["conditions", "constraints"]
+        return base_metadata
     
     async def execute(self, **kwargs: Any) -> ToolResult:
-        """Execute navigation to URL."""
+        """Execute navigation to URL.
+        
+        Supports context with:
+        - conditions: Navigation conditions (e.g., requires_login, max_redirects)
+        - constraints: Navigation constraints (e.g., timeout_seconds)
+        """
         url = kwargs.get("url")
         wait_until = kwargs.get("wait_until", "domcontentloaded")
         
         if not url:
             return ToolResult.error_result("URL is required")
+        
+        # Get user context if provided
+        user_context = self.get_user_context()
+        conditions = {}
+        constraints = {}
+        
+        if user_context:
+            if isinstance(user_context, dict):
+                conditions = user_context.get("conditions", {})
+                constraints = user_context.get("constraints", {})
+            else:
+                # Handle ActionContext object
+                from flybrowser.agents.context import ActionContext
+                if isinstance(user_context, ActionContext):
+                    conditions = user_context.conditions
+                    constraints = user_context.constraints
+        
+        # Apply constraints
+        timeout_seconds = constraints.get("timeout_seconds")
+        if timeout_seconds:
+            # Store original timeout and apply constraint
+            original_timeout = self._page_controller.page.context.browser.new_context.default_timeout
+            self._page_controller.page.set_default_timeout(timeout_seconds * 1000)
+        
+        # Check conditions before navigation
+        requires_login = conditions.get("requires_login")
+        if requires_login is False:
+            # User explicitly indicated no login required - proceed normally
+            pass
+        elif requires_login is True:
+            # User expects login - might want to check auth state first
+            # For now, just log it
+            import logging
+            logging.getLogger(__name__).debug(f"Navigation to {url} requires login (as per context)")
+        
+        max_redirects = conditions.get("max_redirects")
+        if max_redirects is not None:
+            # Note: Playwright doesn't directly support max_redirects limit
+            # We log it for awareness but can't enforce it directly
+            import logging
+            logging.getLogger(__name__).debug(f"Max redirects set to {max_redirects} (advisory only)")
         
         try:
             # Navigate to URL
