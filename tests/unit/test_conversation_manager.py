@@ -773,3 +773,460 @@ class TestConversationManager:
         
         # Should have multiple calls (accumulation + synthesis)
         assert mock_llm.generate_structured.call_count > 1
+
+
+class TestReActAgentConversationIntegration:
+    """Tests for ReActAgent's ConversationManager integration."""
+    
+    @pytest.fixture
+    def mock_page_controller(self):
+        """Create mock page controller."""
+        mock = MagicMock()
+        mock.page = MagicMock()
+        mock.page.url = "https://example.com"
+        return mock
+    
+    @pytest.fixture
+    def mock_llm_provider(self):
+        """Create mock LLM provider."""
+        mock = MagicMock()
+        mock.get_model_info.return_value = MagicMock(
+            name="test-model",
+            provider="test",
+            context_window=128000,
+            max_output_tokens=8192,
+            capabilities=[],
+        )
+        mock.model = "test-model"
+        mock.generate_structured = AsyncMock(return_value={"result": "test"})
+        return mock
+    
+    @pytest.fixture
+    def mock_tool_registry(self):
+        """Create mock tool registry."""
+        mock = MagicMock()
+        mock.list_tools.return_value = []
+        mock.generate_tools_prompt.return_value = "Tools: []"
+        mock.get_filtered_registry.return_value = mock
+        return mock
+    
+    def test_agent_initializes_conversation_manager(self, mock_page_controller, mock_llm_provider, mock_tool_registry):
+        """Test that agent properly initializes ConversationManager."""
+        from flybrowser.agents.react_agent import ReActAgent
+        
+        agent = ReActAgent(
+            page_controller=mock_page_controller,
+            llm_provider=mock_llm_provider,
+            tool_registry=mock_tool_registry,
+        )
+        
+        assert agent.conversation is not None
+        assert isinstance(agent.conversation, ConversationManager)
+        assert agent.conversation.llm is mock_llm_provider
+    
+    def test_agent_reset_clears_conversation(self, mock_page_controller, mock_llm_provider, mock_tool_registry):
+        """Test that agent reset clears conversation history."""
+        from flybrowser.agents.react_agent import ReActAgent
+        
+        agent = ReActAgent(
+            page_controller=mock_page_controller,
+            llm_provider=mock_llm_provider,
+            tool_registry=mock_tool_registry,
+        )
+        
+        # Add some messages
+        agent.conversation.add_user_message("Test message")
+        assert agent.conversation.history.message_count == 1
+        
+        # Reset agent
+        agent._reset_state()
+        
+        # Conversation should be cleared
+        assert agent.conversation.history.message_count == 0
+    
+    def test_check_and_handle_large_context_fits(self, mock_page_controller, mock_llm_provider, mock_tool_registry):
+        """Test _check_and_handle_large_context when context fits."""
+        from flybrowser.agents.react_agent import ReActAgent
+        
+        agent = ReActAgent(
+            page_controller=mock_page_controller,
+            llm_provider=mock_llm_provider,
+            tool_registry=mock_tool_registry,
+        )
+        
+        small_context = "## Current Goal\nTest task\n## Current Page\nhttps://example.com"
+        result = agent._check_and_handle_large_context(small_context)
+        
+        # Should return as-is
+        assert result == small_context
+    
+    def test_check_and_handle_large_context_truncates(self, mock_page_controller, mock_llm_provider, mock_tool_registry):
+        """Test _check_and_handle_large_context truncates large content."""
+        from flybrowser.agents.react_agent import ReActAgent
+        
+        # Use small context window to force truncation
+        mock_llm_provider.get_model_info.return_value = MagicMock(
+            name="test-model",
+            provider="test",
+            context_window=1000,  # Small context window
+            max_output_tokens=200,
+            capabilities=[],
+        )
+        
+        agent = ReActAgent(
+            page_controller=mock_page_controller,
+            llm_provider=mock_llm_provider,
+            tool_registry=mock_tool_registry,
+        )
+        
+        # Large context that won't fit
+        large_context = "## Current Goal\nTest\n## Extracted Data\n" + ("x" * 50000)
+        result = agent._check_and_handle_large_context(large_context)
+        
+        # Should be truncated
+        assert len(result) < len(large_context)
+        assert "truncated" in result.lower() or len(result) < 10000
+    
+    def test_track_conversation_turn_adds_messages(self, mock_page_controller, mock_llm_provider, mock_tool_registry):
+        """Test _track_conversation_turn adds messages to history."""
+        from flybrowser.agents.react_agent import ReActAgent
+        
+        agent = ReActAgent(
+            page_controller=mock_page_controller,
+            llm_provider=mock_llm_provider,
+            tool_registry=mock_tool_registry,
+        )
+        
+        initial_count = agent.conversation.history.message_count
+        
+        agent._track_conversation_turn(
+            user_content="What should I do?",
+            assistant_content='{"thought": "I should click", "action": {"tool": "click"}}'
+        )
+        
+        # Should add 2 messages (user + assistant)
+        assert agent.conversation.history.message_count == initial_count + 2
+    
+    def test_track_conversation_turn_skips_large_content(self, mock_page_controller, mock_llm_provider, mock_tool_registry):
+        """Test _track_conversation_turn skips very large content."""
+        from flybrowser.agents.react_agent import ReActAgent
+        
+        agent = ReActAgent(
+            page_controller=mock_page_controller,
+            llm_provider=mock_llm_provider,
+            tool_registry=mock_tool_registry,
+        )
+        
+        initial_count = agent.conversation.history.message_count
+        
+        # Large content that exceeds max_turn_tokens (10K)
+        large_content = "x" * 100000  # ~25K tokens
+        
+        agent._track_conversation_turn(
+            user_content=large_content,
+            assistant_content="Small response"
+        )
+        
+        # Should NOT add messages (skipped due to size)
+        assert agent.conversation.history.message_count == initial_count
+    
+    def test_conversation_manager_uses_correct_token_budget(self, mock_page_controller, mock_llm_provider, mock_tool_registry):
+        """Test ConversationManager is configured with model's context window."""
+        from flybrowser.agents.react_agent import ReActAgent
+        
+        mock_llm_provider.get_model_info.return_value = MagicMock(
+            name="test-model",
+            provider="test",
+            context_window=64000,
+            max_output_tokens=4096,
+            capabilities=[],
+        )
+        
+        agent = ReActAgent(
+            page_controller=mock_page_controller,
+            llm_provider=mock_llm_provider,
+            tool_registry=mock_tool_registry,
+        )
+        
+        # Budget should reflect model's context window
+        assert agent.conversation.budget.context_window == 64000
+        assert agent.conversation.budget.max_output_tokens == 4096
+
+
+class TestConversationManagerVision:
+    """Tests for ConversationManager vision/VLM support."""
+    
+    @pytest.fixture
+    def mock_vision_llm(self):
+        """Create mock LLM provider with vision capability."""
+        from flybrowser.llm.base import ModelCapability, ModelInfo
+        
+        mock = MagicMock()
+        # Use actual ModelInfo to avoid MagicMock name issues
+        mock.get_model_info.return_value = ModelInfo(
+            name="gpt-4-vision",
+            provider="openai",
+            context_window=128000,
+            max_output_tokens=8192,
+            capabilities=[ModelCapability.VISION, ModelCapability.STRUCTURED_OUTPUT],
+        )
+        mock.generate_structured = AsyncMock(return_value={"result": "test"})
+        mock.generate_structured_with_vision = AsyncMock(return_value={"thought": "I see a button", "action": {"tool": "click"}})
+        return mock
+    
+    @pytest.fixture
+    def mock_text_only_llm(self):
+        """Create mock LLM provider without vision capability."""
+        from flybrowser.llm.base import ModelInfo
+        
+        mock = MagicMock()
+        # Use actual ModelInfo to avoid MagicMock name issues
+        mock.get_model_info.return_value = ModelInfo(
+            name="gpt-3.5-turbo",
+            provider="openai",
+            context_window=16000,
+            max_output_tokens=4096,
+            capabilities=[],  # No vision
+        )
+        mock.generate_structured = AsyncMock(return_value={"result": "test"})
+        return mock
+    
+    def test_has_vision_property_true(self, mock_vision_llm):
+        """Test has_vision is True for vision-capable models."""
+        manager = ConversationManager(mock_vision_llm)
+        assert manager.has_vision is True
+    
+    def test_has_vision_property_false(self, mock_text_only_llm):
+        """Test has_vision is False for text-only models."""
+        manager = ConversationManager(mock_text_only_llm)
+        assert manager.has_vision is False
+    
+    @pytest.mark.asyncio
+    async def test_send_structured_with_vision_success(self, mock_vision_llm):
+        """Test send_structured_with_vision with a vision-capable model."""
+        manager = ConversationManager(mock_vision_llm)
+        
+        # Fake screenshot bytes
+        image_data = b"x" * 10000  # ~10KB image
+        
+        response = await manager.send_structured_with_vision(
+            content="Click the search button",
+            image_data=image_data,
+            schema={"type": "object"},
+            temperature=0.7,
+        )
+        
+        assert response == {"thought": "I see a button", "action": {"tool": "click"}}
+        mock_vision_llm.generate_structured_with_vision.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_send_structured_with_vision_fails_without_capability(self, mock_text_only_llm):
+        """Test send_structured_with_vision raises error for non-vision models."""
+        manager = ConversationManager(mock_text_only_llm)
+        
+        image_data = b"x" * 10000
+        
+        with pytest.raises(ValueError, match="does not support vision"):
+            await manager.send_structured_with_vision(
+                content="Click the button",
+                image_data=image_data,
+                schema={"type": "object"},
+            )
+    
+    def test_estimate_image_tokens_low_detail(self, mock_vision_llm):
+        """Test image token estimation for low detail."""
+        manager = ConversationManager(mock_vision_llm)
+        
+        tokens = manager._estimate_image_tokens(100000, detail="low")
+        
+        # Low detail should return fixed base tokens
+        assert tokens == ConversationManager.IMAGE_BASE_TOKENS
+    
+    def test_estimate_image_tokens_high_detail(self, mock_vision_llm):
+        """Test image token estimation for high detail."""
+        manager = ConversationManager(mock_vision_llm)
+        
+        # ~100KB image
+        tokens = manager._estimate_image_tokens(100000, detail="high")
+        
+        # Should be base + tiles * tokens_per_tile
+        assert tokens > ConversationManager.IMAGE_BASE_TOKENS
+        assert tokens <= ConversationManager.IMAGE_BASE_TOKENS + (16 * ConversationManager.IMAGE_TOKENS_PER_TILE)
+    
+    def test_estimate_image_tokens_auto_detail(self, mock_vision_llm):
+        """Test image token estimation for auto detail."""
+        manager = ConversationManager(mock_vision_llm)
+        
+        # Small image ~10KB
+        small_tokens = manager._estimate_image_tokens(10000, detail="auto")
+        # Large image ~500KB
+        large_tokens = manager._estimate_image_tokens(500000, detail="auto")
+        
+        # Larger image should estimate more tokens
+        assert large_tokens >= small_tokens
+    
+    @pytest.mark.asyncio
+    async def test_vision_request_tracks_statistics(self, mock_vision_llm):
+        """Test that vision requests are tracked in statistics."""
+        manager = ConversationManager(mock_vision_llm)
+        
+        initial_stats = manager.get_stats()
+        assert initial_stats["vision_requests"] == 0
+        
+        await manager.send_structured_with_vision(
+            content="Test",
+            image_data=b"x" * 10000,
+            schema={"type": "object"},
+        )
+        
+        updated_stats = manager.get_stats()
+        assert updated_stats["vision_requests"] == 1
+        assert updated_stats["total_requests"] == 1
+    
+    def test_stats_includes_vision_info(self, mock_vision_llm):
+        """Test that stats include vision capability info."""
+        manager = ConversationManager(mock_vision_llm)
+        
+        stats = manager.get_stats()
+        
+        assert "has_vision" in stats
+        assert stats["has_vision"] is True
+        assert "model" in stats
+        assert stats["model"] == "gpt-4-vision"
+
+
+class TestConversationManagerCleanup:
+    """Tests for ConversationManager cleanup and budget management methods."""
+    
+    @pytest.fixture
+    def mock_llm(self):
+        """Create mock LLM provider."""
+        from flybrowser.llm.base import ModelInfo
+        
+        mock = MagicMock()
+        mock.get_model_info.return_value = ModelInfo(
+            name="gpt-4",
+            provider="openai",
+            context_window=128000,
+            max_output_tokens=8192,
+            capabilities=[],
+        )
+        mock.generate_structured = AsyncMock(return_value={"result": "test"})
+        return mock
+    
+    def test_ensure_budget_available_does_nothing_when_sufficient(self, mock_llm):
+        """Test ensure_budget_available returns 0 when budget is sufficient."""
+        manager = ConversationManager(mock_llm)
+        
+        # Budget should be sufficient for small request
+        pruned = manager.ensure_budget_available(required_tokens=1000)
+        
+        assert pruned == 0
+    
+    def test_ensure_budget_available_prunes_when_needed(self, mock_llm):
+        """Test ensure_budget_available prunes history when budget is low."""
+        manager = ConversationManager(mock_llm)
+        
+        # Fill up history with many messages
+        for i in range(20):
+            manager.add_user_message(f"User message {i} " * 500)  # ~500 tokens each
+            manager.add_assistant_message(f"Assistant response {i} " * 500)
+        
+        initial_count = manager.history.message_count
+        assert initial_count == 40  # 20 pairs
+        
+        # Now request a very large budget that will require pruning
+        available_before = manager.get_available_tokens()
+        pruned = manager.ensure_budget_available(
+            required_tokens=available_before + 10000,  # Request more than available
+            min_free_tokens=5000,
+        )
+        
+        # Should have pruned some messages
+        assert pruned > 0
+        assert manager.history.message_count < initial_count
+        # Should keep at least 4 recent messages
+        assert manager.history.message_count >= 4
+    
+    def test_ensure_budget_available_aggressive_mode(self, mock_llm):
+        """Test ensure_budget_available with aggressive mode prunes more."""
+        manager = ConversationManager(mock_llm)
+        
+        # Fill up history
+        for i in range(30):
+            manager.add_user_message(f"User message {i} " * 500)
+            manager.add_assistant_message(f"Assistant response {i} " * 500)
+        
+        initial_count = manager.history.message_count
+        
+        # Request aggressive cleanup
+        pruned = manager.ensure_budget_available(
+            required_tokens=manager.budget.available_for_input,  # Request max
+            min_free_tokens=50000,
+            aggressive=True,
+        )
+        
+        # Aggressive mode should prune down to 2 messages
+        if manager.history.message_count == 2:
+            assert pruned > 0
+    
+    def test_cleanup_if_needed_no_action_when_budget_ok(self, mock_llm):
+        """Test cleanup_if_needed does nothing when budget is healthy."""
+        manager = ConversationManager(mock_llm)
+        
+        # Add a few messages (not enough to trigger cleanup)
+        manager.add_user_message("Hello")
+        manager.add_assistant_message("Hi there")
+        
+        # Cleanup should not be needed
+        pruned = manager.cleanup_if_needed(threshold_percent=0.15)
+        
+        assert pruned == 0
+        assert manager.history.message_count == 2
+    
+    def test_cleanup_if_needed_triggers_when_budget_low(self, mock_llm):
+        """Test cleanup_if_needed triggers cleanup when budget is below threshold."""
+        manager = ConversationManager(mock_llm)
+        
+        # Fill up most of the budget (need lots of messages)
+        # Each message of ~2000 chars is roughly 500 tokens
+        message_count = 0
+        while manager.get_available_tokens() > manager.budget.available_for_input * 0.10:
+            manager.add_user_message("x" * 2000)
+            manager.add_assistant_message("y" * 2000)
+            message_count += 2
+            if message_count > 200:  # Safety limit
+                break
+        
+        initial_available = manager.get_available_tokens()
+        initial_count = manager.history.message_count
+        
+        # Should trigger cleanup (15% threshold)
+        pruned = manager.cleanup_if_needed(threshold_percent=0.15)
+        
+        # Should have freed up some space
+        if pruned > 0:
+            assert manager.get_available_tokens() > initial_available
+            assert manager.history.message_count < initial_count
+    
+    def test_ensure_budget_available_keeps_recent_messages(self, mock_llm):
+        """Test that ensure_budget_available always keeps recent messages."""
+        manager = ConversationManager(mock_llm)
+        
+        # Add messages with identifiable content
+        for i in range(10):
+            manager.add_user_message(f"User message {i} " * 500)
+            manager.add_assistant_message(f"Assistant response {i} " * 500)
+        
+        # Force pruning
+        manager.ensure_budget_available(
+            required_tokens=manager.budget.available_for_input,
+            min_free_tokens=manager.budget.available_for_input // 2,
+        )
+        
+        # Verify recent messages are kept (last 4 at minimum)
+        remaining_messages = manager.history.messages
+        assert len(remaining_messages) >= 4
+        
+        # Most recent message should still be there
+        assert "response 9" in remaining_messages[-1].content

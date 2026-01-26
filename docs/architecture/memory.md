@@ -44,18 +44,30 @@ class AgentMemory:
     
     def __init__(
         self,
-        context_window_budget: int = 16000,
-        short_term_max_entries: int = 20,
+        context_window_budget: int = 64000,  # Modern LLMs have large context windows
+        short_term_max_entries: int = 50,    # Keep more history
         long_term_max_patterns: int = 100,
+        # Extraction data limits (prevent token overflow)
+        max_extraction_budget_percent: float = 0.20,  # Max 20% of budget
+        max_extraction_tokens: int = 4000,            # Hard cap on extraction tokens
+        max_single_extraction_chars: int = 8000,      # Per-extraction char limit
     ) -> None:
         """Initialize agent memory system."""
         self.context_window_budget = context_window_budget
+        
+        # Store extraction limits
+        self.max_extraction_budget_percent = max_extraction_budget_percent
+        self.max_extraction_tokens = max_extraction_tokens
+        self.max_single_extraction_chars = max_single_extraction_chars
         
         # Memory subsystems
         self.short_term = ShortTermMemory(max_entries=short_term_max_entries)
         self.working = WorkingMemory(token_budget=context_window_budget // 4)
         self.long_term = LongTermMemory(max_patterns=long_term_max_patterns)
         self.context_store = ContextStore()
+        
+        # Track visited URLs
+        self._visited_urls: Set[str] = set()
 ```
 
 ### Key Methods
@@ -565,12 +577,90 @@ The memory system automatically limits extraction data to prevent token overflow
 
 ```python
 # In format_for_prompt(), extraction data is limited:
-# - Max 25% of remaining budget for all extractions
-# - Max 32K chars per individual extraction
+# - Max 20% of remaining budget for all extractions (configurable)
+# - Max 8000 chars per individual extraction (~2K tokens)
 # - Smart head/tail truncation for large extractions
 
-max_extraction_budget = remaining_budget // 4  # 25%
-max_single_extraction_chars = min(max_extraction_budget // 2, 32000)
+# Configuration in MemoryConfig:
+max_extraction_budget_percent: float = 0.20  # Max 20% of budget
+max_extraction_tokens: int = 4000  # Hard cap on total extraction tokens
+max_single_extraction_chars: int = 8000  # Per-extraction limit
+```
+
+### Intelligent Compression
+
+Large extractions are compressed using the `ContextCompressor` to preserve essential information:
+
+```python
+from flybrowser.llm import ContextCompressor, CompressionContentType
+
+# Compression is triggered automatically when:
+# - Data size exceeds compression_threshold_tokens (default 2000)
+# - enable_intelligent_compression is True
+# - Data is from a compressible tool (not URL-critical)
+
+# URL-CRITICAL tools (NEVER compressed):
+# - search, search_human, search_api, search_rank (contain navigation URLs)
+# - get_page_state (contains navigation links, buttons, selectors)
+# - get_attribute (contains href, src values)
+
+# COMPRESSIBLE tools:
+# - extract_text, extract_data, extract_structured_data
+# - evaluate_javascript, get_page_content
+```
+
+**Content Types:**
+
+The compressor auto-detects content type for optimal preservation:
+
+| Content Type | Preservation Priority |
+|-------------|----------------------|
+| `search_results` | ALL URLs, titles, snippets |
+| `page_state` | ALL links, buttons, selectors |
+| `text_content` | Key facts, embedded URLs |
+| `error_info` | Error type, message, recovery suggestions |
+| `structured_data` | Field names, values, IDs |
+| `form_data` | Field names, types, selectors |
+
+**Compression Tiers:**
+
+```python
+# Tier 1 (Recent): Maximum detail preservation
+# Tier 2 (Session): Compress text, preserve all URLs/selectors
+# Tier 3 (Archival): Aggressive compression, facts only
+
+compressed = await compressor.compress_extraction(
+    large_data=extraction_result,
+    content_type=ContentType.TEXT_CONTENT,
+    compression_tier=2,  # Session tier
+    validate_urls=True,  # Ensure URLs preserved
+)
+```
+
+**URL Validation:**
+
+```python
+# After compression, URL preservation is validated:
+is_valid, msg = compressed.validate_url_preservation(original_url_count)
+
+# If URLs are lost, fallback extraction recovers them:
+if not is_valid:
+    fallback_urls = compressor._extract_all_urls(content)
+    compressed.urls_mentioned.extend(fallback_urls)
+```
+
+**Accessing Compressed Data:**
+
+```python
+print(compressed.summary)  # One-line summary
+print(compressed.key_facts)  # List of bullet points
+print(compressed.urls_mentioned)  # Preserved URLs
+print(compressed.navigation_targets)  # [{"label": ..., "url": ...}]
+print(compressed.form_fields)  # [{"name": ..., "type": ...}]
+print(compressed.compression_confidence)  # 0-1 confidence score
+
+# Format for LLM prompt
+context = compressed.format_for_prompt()
 ```
 
 ### Integration with ConversationManager

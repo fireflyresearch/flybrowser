@@ -161,17 +161,25 @@ is_valid, error = validator.validate_url("file:///etc/passwd")
 
 ## Structured LLM Wrapper
 
-The `StructuredLLMWrapper` ensures reliable JSON responses from LLMs:
+The `StructuredLLMWrapper` ensures reliable JSON responses from LLMs. **All calls are routed through `ConversationManager`** for unified token tracking and budget management.
 
 ```python
 class StructuredLLMWrapper:
-    """Wrapper for reliable structured LLM responses."""
+    """Wrapper for reliable structured LLM responses.
+    
+    ALL calls are routed through ConversationManager for:
+    - Unified token tracking across all LLM interactions
+    - Automatic budget management
+    - Conversation history (optional)
+    - Vision/VLM support
+    """
     
     def __init__(
         self,
         llm_provider: BaseLLMProvider,
         max_repair_attempts: int = 2,
         repair_temperature: float = 0.1,
+        conversation_manager: Optional[ConversationManager] = None,
     ):
         """
         Initialize the wrapper.
@@ -180,7 +188,11 @@ class StructuredLLMWrapper:
             llm_provider: LLM provider to wrap
             max_repair_attempts: Maximum repair attempts
             repair_temperature: Temperature for repairs (low = deterministic)
+            conversation_manager: ConversationManager for all LLM interactions.
+                                  If not provided, one will be created automatically.
         """
+        # ConversationManager is MANDATORY - created if not provided
+        self.conversation = conversation_manager or ConversationManager(llm_provider)
         ...
     
     async def generate_structured(
@@ -191,8 +203,12 @@ class StructuredLLMWrapper:
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
         custom_validator: Optional[Callable] = None,
+        add_to_history: bool = False,
     ) -> Dict[str, Any]:
-        """Generate structured JSON response with validation and repair."""
+        """Generate structured JSON response with validation and repair.
+        
+        Routes through ConversationManager.send_structured().
+        """
         ...
     
     async def generate_structured_with_vision(
@@ -200,9 +216,14 @@ class StructuredLLMWrapper:
         prompt: str,
         image_data: Union[bytes, List[bytes]],
         schema: Dict[str, Any],
+        add_to_history: bool = False,
         ...
     ) -> Dict[str, Any]:
-        """Generate structured JSON with vision and validation."""
+        """Generate structured JSON with vision and validation.
+        
+        Routes through ConversationManager.send_structured_with_vision().
+        Raises ValueError if model doesn't support vision.
+        """
         ...
 ```
 
@@ -283,11 +304,21 @@ Repair prompt includes:
 
 ```python
 from flybrowser.agents.structured_llm import StructuredLLMWrapper
+from flybrowser.llm.conversation import ConversationManager
 
+# Option 1: Let wrapper create ConversationManager automatically
 wrapper = StructuredLLMWrapper(
     llm_provider=provider,
     max_repair_attempts=2,
     repair_temperature=0.1,
+)
+# wrapper.conversation is the ConversationManager
+
+# Option 2: Share a ConversationManager with other components
+conversation = ConversationManager(provider)
+wrapper = StructuredLLMWrapper(
+    llm_provider=provider,
+    conversation_manager=conversation,  # Share with agent, etc.
 )
 
 schema = {
@@ -300,7 +331,7 @@ schema = {
     "required": ["action", "selector"],
 }
 
-# Generate structured response
+# Generate structured response (routes through ConversationManager)
 result = await wrapper.generate_structured(
     prompt="Analyze this page and determine the next action",
     schema=schema,
@@ -309,6 +340,18 @@ result = await wrapper.generate_structured(
 
 # result is guaranteed to match schema
 print(result)  # {"action": "click", "selector": "#submit", "confidence": 0.95}
+
+# Vision requests (if model supports)
+if wrapper.conversation.has_vision:
+    result = await wrapper.generate_structured_with_vision(
+        prompt="What elements are visible?",
+        image_data=screenshot_bytes,
+        schema=element_schema,
+    )
+
+# Access statistics from ConversationManager
+stats = wrapper.conversation.get_statistics()
+print(f"Tokens used: {stats['tokens_used']}")
 ```
 
 ## Tool Parameter Validation

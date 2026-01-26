@@ -651,15 +651,23 @@ Logging levels:
 
 ## Conversation Management
 
-FlyBrowser includes a sophisticated `ConversationManager` for handling multi-turn conversations and large content that exceeds LLM token limits.
+FlyBrowser uses a **mandatory** `ConversationManager` for ALL LLM interactions. This ensures consistent token tracking, budget management, and conversation history across the entire framework.
 
 ### ConversationManager
 
-The `ConversationManager` handles:
+The `ConversationManager` is the **central interface** for ALL LLM calls. It handles:
 - Multi-turn conversation history tracking
 - Token budget management to prevent context overflow
 - Large content chunking and multi-turn processing
 - Structured output preservation across turns
+- Vision/VLM support with image token estimation
+- Unified logging and statistics
+
+**All LLM calls in FlyBrowser are routed through ConversationManager**, including:
+- `StructuredLLMWrapper.generate_structured()` → `ConversationManager.send_structured()`
+- `StructuredLLMWrapper.generate_structured_with_vision()` → `ConversationManager.send_structured_with_vision()`
+- `StructuredLLMWrapper._repair_response()` → `ConversationManager.send_structured()`
+- `ReActAgent._generate_with_optional_vision()` → `ConversationManager`
 
 ```python
 from flybrowser.llm.conversation import ConversationManager
@@ -674,6 +682,13 @@ manager.set_system_prompt("You are a helpful assistant.")
 response = await manager.send_structured(
     "What is the capital of France?",
     schema={"type": "object", "properties": {"answer": {"type": "string"}}}
+)
+
+# Vision request (for VLM models)
+response = await manager.send_structured_with_vision(
+    "Analyze this screenshot",
+    image_data=screenshot_bytes,
+    schema={"type": "object", "properties": {"elements": {"type": "array"}}}
 )
 
 # Handle large content automatically
@@ -745,12 +760,47 @@ response = await manager.send_with_large_content(
 # Manager automatically chunks, processes, and synthesizes
 ```
 
-### Integration with ReActAgent
+### Vision Support
 
-The ReActAgent automatically uses `ConversationManager` for context management:
+ConversationManager supports vision/VLM models:
 
 ```python
-# ConversationManager is initialized automatically
+# Check if model supports vision
+if manager.has_vision:
+    response = await manager.send_structured_with_vision(
+        content="What elements are visible on this page?",
+        image_data=screenshot_bytes,
+        schema=element_schema,
+    )
+
+# Image tokens are estimated automatically
+# Base: 85 tokens + 170 tokens per 512x512 tile
+```
+
+### Integration with Components
+
+**All components that use StructuredLLMWrapper automatically route through ConversationManager:**
+
+- **ReActAgent**: Main reasoning loop and vision requests
+- **TaskPlanner**: Planning structured outputs
+- **ObstacleDetector**: Page analysis and obstacle detection
+- **SitemapGraph**: Link analysis
+- **PageAnalyzer**: Page structure analysis
+
+```python
+# StructuredLLMWrapper creates ConversationManager automatically
+wrapper = StructuredLLMWrapper(llm_provider)
+# wrapper.conversation is the ConversationManager
+
+# All calls go through ConversationManager
+result = await wrapper.generate_structured(prompt, schema)  # → ConversationManager.send_structured()
+result = await wrapper.generate_structured_with_vision(prompt, image, schema)  # → ConversationManager.send_structured_with_vision()
+```
+
+The ReActAgent also uses ConversationManager directly for its reasoning loop:
+
+```python
+# ReActAgent has its own ConversationManager instance
 agent = ReActAgent(page, llm_provider, tool_registry, memory)
 
 # During execution, large extraction data is handled automatically

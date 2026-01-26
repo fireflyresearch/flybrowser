@@ -59,14 +59,21 @@ system_template: |
   
   2. **Search + Navigate Pattern** (PREFERRED FOR SEARCH TASKS):
      **IMPORTANT: Use the 'search' tool for web searches - it's faster and more reliable!**
-     - Phase 1: Use 'search' tool to find relevant pages (NOT navigate to Google!)
-     - Phase 2: Navigate to best result from search
-     - Phase 3: Extract / interact
+     **IMPORTANT: Create ONE goal per phase - agent will naturally chain actions!**
+     
+     - Phase 1: "Search and identify official site" (ONE combined goal - agent searches, reviews, and identifies in one flow)
+     - Phase 2: "Navigate to identified site" (may be skipped if agent already navigated)
+     - Phase 3: "Extract business information"
+     
      Example: "Find pricing page for Company X"
      Example: "Search for 'Taidy startup' and get information"
      
      **DO NOT create plans that navigate to google.com/bing.com/duckduckgo.com!**
      **Use the 'search' tool instead - it uses API search which is much faster.**
+     
+     **DO NOT create separate goals for 'search' and 'review results' - combine them!**
+     The agent naturally reviews results after searching, so one goal like
+     "Search for X and identify the official website" is sufficient.
   
   3. **Multi-Step Form Pattern**:
      - Phase 1: Navigate to form
@@ -310,56 +317,37 @@ examples:
       {
         "phases": [
           {
-            "name": "Search for Information",
-            "description": "Use search tool to find relevant pages about Taidy startup",
+            "name": "Search and Identify Official Site",
+            "description": "Use search tool to find and identify the official Taidy website",
             "goals": [
               {
-                "description": "Use 'search' tool with query 'Taidy Albacete startup' to find relevant results",
-                "success_criteria": "Search results returned with relevant URLs to visit"
-              },
-              {
-                "description": "Identify the most relevant search result (official website or main business profile)",
-                "success_criteria": "Best URL identified from search results"
+                "description": "Search for 'Taidy Albacete startup' and identify the official company website from results",
+                "success_criteria": "Official website URL identified from search results"
               }
             ],
             "dependencies": []
           },
           {
-            "name": "Navigate to Business Website",
-            "description": "Visit the identified website to gather business information",
+            "name": "Navigate to Official Website",
+            "description": "Visit the identified official website",
             "goals": [
               {
-                "description": "Navigate to Taidy's website or main business profile URL from search results",
-                "success_criteria": "Successfully loaded the business website"
+                "description": "Navigate to the identified official Taidy website",
+                "success_criteria": "Successfully loaded the official business website"
               }
             ],
-            "dependencies": ["Search for Information"]
+            "dependencies": ["Search and Identify Official Site"]
           },
           {
-            "name": "Extract Business Information",
-            "description": "Gather comprehensive business information from the website",
+            "name": "Extract and Summarize Business Information",
+            "description": "Gather and compile comprehensive business information from the website",
             "goals": [
               {
-                "description": "Extract company overview, mission, and main business activities",
-                "success_criteria": "Business description captured"
-              },
-              {
-                "description": "Extract products/services, team info, and contact details if available",
-                "success_criteria": "Key business details extracted"
+                "description": "Extract all key business information: company overview, products/services, mission, team, and contact details",
+                "success_criteria": "Comprehensive business information extracted and summarized"
               }
             ],
-            "dependencies": ["Navigate to Business Website"]
-          },
-          {
-            "name": "Compile Summary",
-            "description": "Aggregate all information into a comprehensive business summary",
-            "goals": [
-              {
-                "description": "Create a structured summary of Taidy's business",
-                "success_criteria": "Summary includes: what they do, products/services, location, and key details"
-              }
-            ],
-            "dependencies": ["Extract Business Information"]
+            "dependencies": ["Navigate to Official Website"]
           }
         ]
       }

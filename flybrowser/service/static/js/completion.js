@@ -134,7 +134,7 @@ class JsonTreeRenderer {
         this.options = {
             defaultExpanded: true,      // Expand all by default
             maxAutoExpandDepth: 10,     // Max depth to auto-expand
-            truncateStringsAt: 120,     // Truncate long strings
+            truncateStringsAt: 500,     // Truncate long strings
             ...options
         };
     }
@@ -418,7 +418,7 @@ function initJsonTree() {
             jsonTreeRenderer = new JsonTreeRenderer(treeContainer, {
                 defaultExpanded: true,
                 maxAutoExpandDepth: 10,
-                truncateStringsAt: 150
+                truncateStringsAt: 500
             });
             jsonTreeRenderer.render(jsonData);
         }
