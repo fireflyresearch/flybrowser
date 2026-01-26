@@ -27,7 +27,7 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 logger = logging.getLogger(__name__)
 
 
-async def try_css_selector(page: Page, selector: str, timeout: float = 2.0) -> bool:
+async def try_css_selector(page: Page, selector: str, timeout: float = 3.0) -> bool:
     """
     Try to click element using CSS selector.
     
@@ -52,7 +52,7 @@ async def try_css_selector(page: Page, selector: str, timeout: float = 2.0) -> b
     return False
 
 
-async def try_xpath(page: Page, xpath: str, timeout: float = 2.0) -> bool:
+async def try_xpath(page: Page, xpath: str, timeout: float = 3.0) -> bool:
     """
     Try to click element using XPath expression.
     
@@ -77,7 +77,7 @@ async def try_xpath(page: Page, xpath: str, timeout: float = 2.0) -> bool:
     return False
 
 
-async def try_text_contains(page: Page, text: str, timeout: float = 2.0) -> bool:
+async def try_text_contains(page: Page, text: str, timeout: float = 3.0) -> bool:
     """
     Try to click element containing specific text (language-agnostic).
     
@@ -162,7 +162,7 @@ async def try_text_contains(page: Page, text: str, timeout: float = 2.0) -> bool
     return False
 
 
-async def try_coordinates(page: Page, x: int, y: int, timeout: float = 2.0) -> bool:
+async def try_coordinates(page: Page, x: int, y: int, timeout: float = 3.0) -> bool:
     """
     Try to click at specific screen coordinates (useful for VLM-detected buttons).
     
@@ -386,6 +386,203 @@ async def try_event_simulation(page: Page, selector: str, timeout: float = 2.0) 
     return False
 
 
+async def try_scroll_away(page: Page, direction: str = "down", amount: int = 1000, timeout: float = 2.0) -> bool:
+    """
+    Try to scroll past an obstacle to make it disappear.
+    
+    Some obstacles (sticky headers, banners) disappear when scrolled past.
+    This strategy scrolls the page and checks if the obstacle is gone.
+    
+    Args:
+        page: Playwright page
+        direction: Scroll direction ("down", "up")
+        amount: Pixels to scroll (default: 1000px = ~1 viewport)
+        timeout: Max wait time in seconds
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        logger.debug(f"[Strategy:Scroll] Attempting to scroll {direction} by {amount}px")
+        
+        # Scroll the page
+        if direction.lower() == "down":
+            await page.evaluate(f"window.scrollBy(0, {amount})")
+        elif direction.lower() == "up":
+            await page.evaluate(f"window.scrollBy(0, -{amount})")
+        else:
+            logger.warning(f"[Strategy:Scroll] Unknown direction: {direction}")
+            return False
+        
+        # Wait for scroll to complete and any animations
+        await page.wait_for_timeout(800)
+        
+        logger.info(f" [Strategy:Scroll] Scrolled {direction} by {amount}px")
+        return True
+        
+    except Exception as e:
+        logger.debug(f"[Strategy:Scroll] Failed: {e}")
+    return False
+
+
+async def try_wait_for_dismiss(page: Page, timeout: float = 5.0) -> bool:
+    """
+    Wait for obstacle to auto-dismiss (some popups auto-close after delay).
+    
+    Many marketing popups, cookie banners, and notifications have auto-dismiss
+    timers. This strategy waits and checks if the obstacle disappears.
+    
+    Args:
+        page: Playwright page
+        timeout: Max wait time in seconds (default: 5s)
+        
+    Returns:
+        True if obstacle disappeared, False if still present
+    """
+    try:
+        logger.debug(f"[Strategy:Wait] Waiting up to {timeout}s for auto-dismiss")
+        
+        # Take initial snapshot of high z-index elements
+        initial_count = await page.evaluate("""
+            () => {
+                const elements = document.querySelectorAll('*');
+                let count = 0;
+                elements.forEach(el => {
+                    const style = window.getComputedStyle(el);
+                    const zIndex = parseInt(style.zIndex) || 0;
+                    if (zIndex > 900 && style.display !== 'none' && style.visibility !== 'hidden') {
+                        count++;
+                    }
+                });
+                return count;
+            }
+        """)
+        
+        # Wait and check periodically
+        check_interval = 0.5  # Check every 500ms
+        elapsed = 0
+        
+        while elapsed < timeout:
+            await asyncio.sleep(check_interval)
+            elapsed += check_interval
+            
+            # Check if obstacles disappeared
+            current_count = await page.evaluate("""
+                () => {
+                    const elements = document.querySelectorAll('*');
+                    let count = 0;
+                    elements.forEach(el => {
+                        const style = window.getComputedStyle(el);
+                        const zIndex = parseInt(style.zIndex) || 0;
+                        if (zIndex > 900 && style.display !== 'none' && style.visibility !== 'hidden') {
+                            count++;
+                        }
+                    });
+                    return count;
+                }
+            """)
+            
+            # If count decreased significantly, obstacle likely dismissed
+            if current_count < initial_count * 0.5:  # 50% reduction
+                logger.info(f" [Strategy:Wait] Obstacle auto-dismissed after {elapsed:.1f}s")
+                return True
+        
+        logger.debug(f"[Strategy:Wait] No auto-dismiss after {timeout}s")
+        return False
+        
+    except Exception as e:
+        logger.debug(f"[Strategy:Wait] Failed: {e}")
+    return False
+
+
+async def try_click_outside(page: Page, timeout: float = 2.0) -> bool:
+    """
+    Try clicking outside a modal/dialog to dismiss it (backdrop click).
+    
+    Many modals can be dismissed by clicking the backdrop/overlay area
+    outside the modal content. This strategy identifies the backdrop
+    and clicks it.
+    
+    Args:
+        page: Playwright page
+        timeout: Max wait time in seconds
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        logger.debug("[Strategy:ClickOutside] Attempting to click outside modal")
+        
+        # Find backdrop or overlay element
+        # Common patterns: backdrop, overlay, modal-backdrop, etc.
+        backdrop_clicked = await page.evaluate("""
+            () => {
+                // Look for backdrop elements
+                const backdropSelectors = [
+                    '.modal-backdrop',
+                    '.overlay',
+                    '[class*="backdrop"]',
+                    '[class*="overlay"]',
+                    '[class*="mask"]',
+                    '[role="dialog"] ~ div',  // Backdrop often after dialog
+                ];
+                
+                for (const selector of backdropSelectors) {
+                    try {
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            const style = window.getComputedStyle(el);
+                            const zIndex = parseInt(style.zIndex) || 0;
+                            
+                            // Should be visible and high z-index
+                            if (style.display !== 'none' && 
+                                style.visibility !== 'hidden' && 
+                                zIndex > 100) {
+                                // Click it
+                                el.click();
+                                return true;
+                            }
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+                
+                // Fallback: Click at edge of viewport (likely backdrop)
+                // Find the topmost element at viewport edges
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
+                
+                // Try clicking at top-left corner (often backdrop)
+                const topLeft = document.elementFromPoint(50, 50);
+                if (topLeft) {
+                    const style = window.getComputedStyle(topLeft);
+                    const zIndex = parseInt(style.zIndex) || 0;
+                    
+                    // If it's a high z-index element, might be backdrop
+                    if (zIndex > 100) {
+                        topLeft.click();
+                        return true;
+                    }
+                }
+                
+                return false;
+            }
+        """)
+        
+        if backdrop_clicked:
+            await page.wait_for_timeout(800)
+            logger.info(" [Strategy:ClickOutside] Clicked outside modal/backdrop")
+            return True
+        
+        logger.debug("[Strategy:ClickOutside] No backdrop found to click")
+        return False
+        
+    except Exception as e:
+        logger.debug(f"[Strategy:ClickOutside] Failed: {e}")
+    return False
+
+
 # Strategy registry for easy lookup
 STRATEGIES = {
     "css": try_css_selector,
@@ -396,4 +593,7 @@ STRATEGIES = {
     "javascript": try_javascript_removal,
     "tab": try_tab_navigation,
     "event": try_event_simulation,
+    "scroll_away": try_scroll_away,
+    "wait_for_dismiss": try_wait_for_dismiss,
+    "click_outside": try_click_outside,
 }

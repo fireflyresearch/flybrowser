@@ -483,11 +483,23 @@ class ObstacleDetector:
         4. coordinates (fallback - VLM coords can be off)
         5. others
         """
+        # Map both LLM-generated names AND normalized names to boost values
+        # This ensures reprioritization works regardless of naming convention
         priority_boost = {
+            # Normalized/internal names
             "text": -10,      # Boost text to top priority
             "css": -5,        # CSS is also good
             "xpath": -3,      # XPath is reliable
             "coordinates": 5,  # Demote coordinates (VLM coords often inaccurate)
+            # LLM-generated names (from schema enum)
+            "click_text": -10,        # Same as "text"
+            "click_button": -10,      # Treat as text
+            "click_selector": -5,     # Same as "css"
+            "click_coordinates": 5,   # Same as "coordinates"
+            "press_key": 0,           # Neutral
+            "scroll_away": 3,         # Lower priority than clicking
+            "wait_for_dismiss": 4,    # Lowest - passive
+            "click_outside": 2,       # Lower priority
         }
         
         for strategy in strategies:
@@ -495,6 +507,7 @@ class ObstacleDetector:
             strategy_type = strategy.get("type", "")
             boost = priority_boost.get(strategy_type, 0)
             strategy["priority"] = original_priority + boost
+            logger.debug(f"[ObstacleDetector] Strategy '{strategy_type}' priority: {original_priority} -> {strategy['priority']} (boost: {boost})")
         
         return strategies
     
@@ -553,34 +566,96 @@ class ObstacleDetector:
         strategy_value = strategy.get("value")
         
         try:
-            # Look up strategy function
-            if strategy_type not in obstacle_strategies.STRATEGIES:
-                logger.warning(f"[ObstacleDetector] Unknown strategy type: {strategy_type}")
+            # Map LLM-generated strategy names to our internal names
+            # This handles the mismatch between schema enum and STRATEGIES registry
+            strategy_mapping = {
+                "click_coordinates": "coordinates",
+                "click_selector": "css",
+                "click_text": "text",
+                "click_button": "text",  # treat as text search
+                "aria": "css",  # treat ARIA selectors as CSS
+                # New strategies are now implemented!
+                "scroll_away": "scroll_away",
+                "wait_for_dismiss": "wait_for_dismiss",
+                "click_outside": "click_outside",
+            }
+            
+            # Handle press_key specially - it may specify the key in value
+            if strategy_type == "press_key":
+                # If value is "Escape" or similar, map to escape strategy
+                # Otherwise try to press the specified key
+                key_value = strategy_value if isinstance(strategy_value, str) else "Escape"
+                if key_value.lower() == "escape":
+                    normalized_type = "escape"
+                else:
+                    # Directly press the specified key using keyboard
+                    try:
+                        logger.debug(f"[Strategy:PressKey] Pressing key: {key_value}")
+                        await self.page.keyboard.press(key_value)
+                        await self.page.wait_for_timeout(500)
+                        logger.info(f" [Strategy:PressKey] Pressed key: {key_value}")
+                        return True
+                    except Exception as e:
+                        logger.debug(f"[Strategy:PressKey] Failed to press {key_value}: {e}")
+                        return False
+            else:
+                # Normalize strategy type for non-press_key strategies
+                normalized_type = strategy_mapping.get(strategy_type, strategy_type)
+            
+            # Skip explicitly unimplemented strategies (mapped to None)
+            if normalized_type is None:
+                logger.debug(f"[ObstacleDetector] Strategy type '{strategy_type}' not implemented yet - skipping")
                 return False
             
-            strategy_func = obstacle_strategies.STRATEGIES[strategy_type]
+            # Look up strategy function
+            if normalized_type not in obstacle_strategies.STRATEGIES:
+                logger.warning(f"[ObstacleDetector] Unknown strategy type: {strategy_type} (normalized: {normalized_type})")
+                return False
+            
+            strategy_func = obstacle_strategies.STRATEGIES[normalized_type]
             
             # Call strategy with appropriate arguments
-            if strategy_type == "coordinates":
+            if normalized_type == "coordinates":
                 if isinstance(strategy_value, dict):
                     x = strategy_value.get("x")
                     y = strategy_value.get("y")
                     return await strategy_func(self.page, x, y)
                 return False
-            elif strategy_type in ["css", "xpath", "javascript", "event"]:
+            elif normalized_type in ["css", "xpath", "javascript", "event"]:
                 if strategy_value:
                     return await strategy_func(self.page, strategy_value)
                 return False
-            elif strategy_type == "text":
+            elif normalized_type == "text":
                 if strategy_value:
                     return await strategy_func(self.page, strategy_value)
                 return False
-            elif strategy_type == "escape":
+            elif normalized_type in ["escape", "tab"]:
+                # No parameters needed
                 return await strategy_func(self.page)
-            elif strategy_type == "tab":
+            elif normalized_type == "scroll_away":
+                # Scroll strategy: value can be direction or dict with direction and amount
+                if isinstance(strategy_value, dict):
+                    direction = strategy_value.get("direction", "down")
+                    amount = strategy_value.get("amount", 1000)
+                    return await strategy_func(self.page, direction, amount)
+                elif isinstance(strategy_value, str):
+                    # Just a direction string
+                    return await strategy_func(self.page, strategy_value)
+                else:
+                    # Use defaults
+                    return await strategy_func(self.page)
+            elif normalized_type == "wait_for_dismiss":
+                # Wait strategy: value can be timeout duration
+                if isinstance(strategy_value, (int, float)):
+                    return await strategy_func(self.page, timeout=float(strategy_value))
+                else:
+                    # Use default timeout
+                    return await strategy_func(self.page)
+            elif normalized_type == "click_outside":
+                # Click outside: no parameters needed
                 return await strategy_func(self.page)
             else:
-                logger.warning(f"[ObstacleDetector] Unhandled strategy type: {strategy_type}")
+                logger.warning(f"[ObstacleDetector] Unhandled strategy type: {normalized_type}")
                 return False
                 
         except Exception as e:
@@ -589,16 +664,73 @@ class ObstacleDetector:
     
     async def _verify_obstacles_gone(self) -> bool:
         """
-        Verify that obstacles have actually been dismissed using VLM.
+        Verify that obstacles have actually been dismissed using DOM check + VLM.
         
-        Uses the same VLM capability to take a fresh screenshot and analyze
-        if blocking obstacles are still present - NO HARDCODED SELECTORS.
+        Uses a two-step verification:
+        1. DOM check for visible modals/overlays (fast, reliable)
+        2. VLM analysis if DOM check passes (catches visual-only obstacles)
         
         Returns:
             True if obstacles still present, False if page is clear
         """
         try:
-            # Check if we have VLM capability for proper verification
+            # Step 1: DOM-based check for common modal indicators
+            # This catches most cases quickly without VLM call
+            dom_has_modal = await self.page.evaluate("""
+                () => {
+                    // Check for visible modals by common patterns
+                    const modalSelectors = [
+                        '.modal.show', '.modal[style*="display: block"]', '.modal[style*="display:block"]',
+                        '[role="dialog"]:not([aria-hidden="true"])',
+                        '.overlay:not([hidden])', '.popup:not([hidden])',
+                        '[class*="modal"][class*="show"]', '[class*="modal"][class*="open"]',
+                        '[class*="overlay"][class*="visible"]',
+                        '[class*="cookie"][class*="banner"]:not([hidden])',
+                        '[class*="consent"]:not([hidden])',
+                    ];
+                    
+                    for (const selector of modalSelectors) {
+                        try {
+                            const elements = document.querySelectorAll(selector);
+                            for (const el of elements) {
+                                const style = window.getComputedStyle(el);
+                                if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+                                    // Check if it's actually covering content (not just existing)
+                                    const rect = el.getBoundingClientRect();
+                                    if (rect.width > 200 && rect.height > 100) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            continue;
+                        }
+                    }
+                    
+                    // Also check if body has overflow:hidden (common when modal is open)
+                    const bodyStyle = window.getComputedStyle(document.body);
+                    if (bodyStyle.overflow === 'hidden') {
+                        // Double-check there's actually an overlay
+                        const centerElement = document.elementFromPoint(
+                            window.innerWidth / 2, 
+                            window.innerHeight / 2
+                        );
+                        if (centerElement && (centerElement.closest('.modal') || 
+                            centerElement.closest('[role="dialog"]') ||
+                            centerElement.closest('[class*="overlay"]'))) {
+                            return true;
+                        }
+                    }
+                    
+                    return false;
+                }
+            """)
+            
+            if dom_has_modal:
+                logger.debug("[ObstacleDetector] DOM check: modal/overlay still visible")
+                return True
+            
+            # Step 2: VLM verification (if available) for visual-only obstacles
             has_vision = self._has_vision_capability()
             
             if has_vision:
@@ -614,7 +746,7 @@ class ObstacleDetector:
                     "properties": {
                         "has_blocking_obstacle": {
                             "type": "boolean",
-                            "description": "True if there is still a blocking overlay/modal/banner visible"
+                            "description": "True if there is a modal, popup, overlay, or banner that covers or blocks the main page content"
                         },
                         "description": {
                             "type": "string",
@@ -625,43 +757,35 @@ class ObstacleDetector:
                 }
                 
                 result = await wrapper.generate_structured_with_vision(
-                    prompt="""Look at this screenshot. Is there a blocking obstacle visible?
-                    
-A blocking obstacle is: cookie consent banner, modal dialog, overlay, popup that covers the main content.
-NOT blocking: small notifications in corners, top/bottom bars that don't cover content, normal page elements.
+                    prompt="""Carefully examine this screenshot. Is there a BLOCKING obstacle visible that covers the main content?
 
-Respond with whether there is a BLOCKING obstacle that prevents interacting with the page.""",
+BLOCKING obstacles (answer TRUE if you see any of these):
+- Modal dialogs or popups in the CENTER of the screen
+- Cookie consent banners that COVER the main content area (not just at the bottom edge)
+- Full-screen or large overlays with semi-transparent backgrounds
+- Any popup that requires user interaction before accessing the page
+
+NOT blocking (answer FALSE if you only see these):
+- Small notification badges in corners
+- Thin bars at very top or very bottom that don't cover content
+- Normal website navigation menus and headers
+- Floating chat widgets in corners
+
+Look specifically at the CENTER of the screen - is there a popup/modal/dialog there?
+Respond with JSON.""",
                     image_data=screenshot,
                     schema=verification_schema,
-                    system_prompt="You are verifying if a web page has blocking obstacles. Be accurate.",
-                    temperature=0.1,
+                    system_prompt="You are verifying if a web page has blocking obstacles. A blocking obstacle is something that COVERS the main content and requires dismissal. Be strict - if you see ANY modal or popup covering the center of the page, return true. Respond in JSON format.",
+                    temperature=0.05,  # Lower temperature for more consistent results
                     max_tokens=256,
                 )
                 
                 still_blocking = result.get("has_blocking_obstacle", False)
-                logger.debug(f"[ObstacleDetector] VLM verification: blocking={still_blocking}, desc={result.get('description', '')[:50]}")
+                logger.debug(f"[ObstacleDetector] VLM verification: blocking={still_blocking}, desc={result.get('description', '')[:80]}")
                 return still_blocking
-            else:
-                # Fallback: Check if page is interactive (can we focus on main content?)
-                # This is a basic heuristic when VLM is not available
-                can_interact = await self.page.evaluate("""
-                    () => {
-                        // Try to find and check if main content area is clickable
-                        const mainContent = document.querySelector('main, #content, .content, article, body');
-                        if (!mainContent) return true; // Assume clear if no main content found
-                        
-                        const rect = mainContent.getBoundingClientRect();
-                        const centerX = rect.left + rect.width / 2;
-                        const centerY = rect.top + rect.height / 2;
-                        
-                        // Check what element is at the center of main content
-                        const elementAtCenter = document.elementFromPoint(centerX, centerY);
-                        
-                        // If the element at center is inside main content, page is likely clear
-                        return !mainContent.contains(elementAtCenter);
-                    }
-                """)
-                return can_interact
+            
+            # No vision - rely on DOM check result (already returned False if we got here)
+            return False
                 
         except Exception as e:
             logger.debug(f"[ObstacleDetector] Verification check failed: {e}")
