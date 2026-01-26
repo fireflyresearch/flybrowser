@@ -17,7 +17,7 @@ version: '3.8'
 services:
   flybrowser:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
     image: flybrowser/flybrowser:latest
     container_name: flybrowser-service
