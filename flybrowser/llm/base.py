@@ -266,6 +266,11 @@ class BaseLLMProvider(ABC):
         # Vision capability override
         # None = use auto-detected, True = force on, False = force off
         self._vision_enabled_override: Optional[bool] = kwargs.get("vision_enabled")
+        
+        # Standardized capability caching (all providers should use these)
+        self._capabilities_detected: bool = False
+        self._model_capabilities_cache: Optional[List[ModelCapability]] = None
+        self._model_info_cache: Optional[ModelInfo] = None
 
         # Initialize production features if config provided
         if config:
@@ -494,6 +499,101 @@ class BaseLLMProvider(ABC):
         
         # Fall back to auto-detected capabilities
         return self.supports_vision()
+
+    async def _execute_with_rate_limit_retry(
+        self,
+        api_call: Callable,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Execute an API call with automatic rate limit retry using exponential backoff.
+        
+        This is a standardized retry mechanism that all LLM providers should use
+        to handle rate limit errors (HTTP 429). It implements:
+        - Exponential backoff with jitter
+        - Delay parsing from API error messages
+        - Configurable max retries and delays
+        
+        Args:
+            api_call: Async callable to execute (e.g., lambda: client.messages.create(...))
+            max_retries: Maximum number of retry attempts (default: 3)
+            base_delay: Base delay in seconds for first retry (default: 1.0)
+            max_delay: Maximum delay between retries (default: 60.0)
+            **kwargs: Additional arguments (reserved for future use)
+            
+        Returns:
+            The result from the API call
+            
+        Raises:
+            The original exception if all retries are exhausted or it's a non-retryable error
+            
+        Example:
+            >>> result = await self._execute_with_rate_limit_retry(
+            ...     lambda: self.client.messages.create(model="...", messages=[...])
+            ... )
+        """
+        import asyncio
+        import random
+        import re
+        
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                return await api_call()
+                
+            except Exception as e:
+                # Check if this is a rate limit error (429)
+                # Different providers may use different exception types
+                is_rate_limit = (
+                    "rate" in str(e).lower() and "limit" in str(e).lower()
+                ) or (
+                    hasattr(e, "status_code") and e.status_code == 429
+                ) or (
+                    "429" in str(e)
+                )
+                
+                if not is_rate_limit:
+                    # Not a rate limit error - don't retry
+                    raise
+                
+                last_exception = e
+                
+                if attempt >= max_retries:
+                    logger.error(
+                        f"[{self.__class__.__name__}] Rate limit: max retries ({max_retries}) "
+                        f"exhausted. Last error: {e}"
+                    )
+                    raise
+                
+                # Calculate delay with exponential backoff
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                
+                # Try to parse delay from error message (e.g., "retry after 5 seconds")
+                error_str = str(e).lower()
+                retry_match = re.search(r"retry.*?(\d+\.?\d*)\s*s", error_str)
+                if retry_match:
+                    suggested_delay = float(retry_match.group(1))
+                    delay = min(suggested_delay, max_delay)
+                
+                # Add jitter (±25%)
+                jitter = delay * 0.25 * (2 * random.random() - 1)
+                delay = max(0.1, delay + jitter)
+                
+                logger.warning(
+                    f"[{self.__class__.__name__}] Rate limit hit (attempt {attempt + 1}/{max_retries + 1}). "
+                    f"Waiting {delay:.2f}s before retry..."
+                )
+                
+                await asyncio.sleep(delay)
+        
+        # Should never reach here, but just in case
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("Unexpected state in rate limit retry")
 
     async def _generate_impl(
         self,
