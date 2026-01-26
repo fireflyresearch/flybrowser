@@ -101,7 +101,8 @@ class SearchAPITool(BaseTool):
             description=(
                 "Perform web search using APIs (Google, Bing). "
                 "Requires API keys. Fast, reliable, avoids bot detection. "
-                "Use search_human if no API keys available."
+                "Use search_human if no API keys available. "
+                "Supports context-based filters (site, filetype) and preferences (max_results)."
             ),
             parameters=[
                 ToolParameter(
@@ -133,6 +134,7 @@ class SearchAPITool(BaseTool):
                 ),
             ],
             examples=['search_api(query="python tutorials", provider="auto", max_results=10)'],
+            expected_context_types=["filters", "preferences"],  # Supports filters (site, filetype) and preferences
         )
     
     async def execute(
@@ -146,6 +148,11 @@ class SearchAPITool(BaseTool):
         """
         Execute API-based search.
         
+        Supports context-based filters and preferences:
+        - filters.site: Restrict to specific domain
+        - filters.filetype: Restrict to file type (pdf, doc, etc.)
+        - preferences.max_results: Override default max results
+        
         Args:
             query: Search query
             provider: Provider to use ('auto', 'google', 'duckduckgo', 'bing')
@@ -155,11 +162,40 @@ class SearchAPITool(BaseTool):
         Returns:
             ToolResult with SearchResponse data
         """
+        from flybrowser.agents.context import ActionContext
+        
         start_time = time.time()
         
+        # Get context for filters/preferences
+        user_context_dict = self.get_user_context()
+        filters = {}
+        preferences = {}
+        
+        if user_context_dict:
+            if isinstance(user_context_dict, dict):
+                filters = user_context_dict.get("filters", {})
+                preferences = user_context_dict.get("preferences", {})
+            elif isinstance(user_context_dict, ActionContext):
+                filters = user_context_dict.filters
+                preferences = user_context_dict.preferences
+        
+        # Apply context preferences
+        if preferences.get("max_results"):
+            max_results = preferences["max_results"]
+        if preferences.get("safe_search") is not None:
+            safe_search = preferences["safe_search"]
+        
         try:
-            # Normalize query
+            # Normalize query and apply filters
             query = normalize_query(query)
+            
+            # Apply site filter if specified
+            if filters.get("site"):
+                query = f"site:{filters['site']} {query}"
+            
+            # Apply filetype filter if specified
+            if filters.get("filetype"):
+                query = f"filetype:{filters['filetype']} {query}"
             
             # Check cache
             cache_key = f"{provider}:{query}:{max_results}"

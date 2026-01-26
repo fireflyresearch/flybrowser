@@ -142,6 +142,18 @@ from flybrowser.agents.response import (
     ExecutionInfo,
 )
 
+# Context System
+from flybrowser.agents.context import (
+    ContextType,
+    ActionContext,
+    FileUploadSpec,
+    ContextBuilder,
+    ContextValidator,
+    create_form_context,
+    create_upload_context,
+    create_filter_context,
+)
+
 __all__ = [
     # Core types
     "Action",
@@ -210,5 +222,14 @@ __all__ = [
     "create_response",
     "LLMUsageInfo",
     "ExecutionInfo",
+    # Context System
+    "ContextType",
+    "ActionContext",
+    "FileUploadSpec",
+    "ContextBuilder",
+    "ContextValidator",
+    "create_form_context",
+    "create_upload_context",
+    "create_filter_context",
 ]
 

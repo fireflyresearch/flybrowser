@@ -148,7 +148,7 @@ class TypeTool(BaseTool):
                 "Type text into an input field, textarea, or contenteditable element. "
                 "By default clears existing content first. Use press_enter=true to submit "
                 "search forms or trigger autocomplete. Works with login forms, search boxes, "
-                "and any text input."
+                "and any text input. Supports context-based form filling via form_data."
             ),
             category=ToolCategory.INTERACTION,
             safety_level=SafetyLevel.MODERATE,
@@ -165,8 +165,8 @@ class TypeTool(BaseTool):
                 ToolParameter(
                     name="text",
                     type="string",
-                    description="The text to type into the field",
-                    required=True,
+                    description="The text to type into the field (or provide via context form_data)",
+                    required=False,
                 ),
                 ToolParameter(
                     name="clear_first",
@@ -190,34 +190,46 @@ class TypeTool(BaseTool):
                 'type_text({"selector": "textarea", "text": "Hello world", "clear_first": false}) - Append text',
             ],
             requires_page=True,
+            expected_context_types=["form_data"],  # This tool can use form_data context
         )
     
     async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute typing into field.
         
         Supports both explicit parameters and context-based form filling.
-        Context format: {"form_data": {"field_selector": "value", ...}}
+        Context is provided via ActionContext with form_data.
         """
+        from flybrowser.agents.context import ActionContext
+        
         selector = kwargs.get("selector")
         text = kwargs.get("text")
         clear_first = kwargs.get("clear_first", True)
         press_enter = kwargs.get("press_enter", False)
 
-        # Check if text is not provided - try to get from context form_data
+        # Check if text is not provided - try to get from ActionContext form_data
         if text is None and selector:
-            user_context = self.get_user_context()
-            form_data = user_context.get("form_data", {})
+            user_context_dict = self.get_user_context()
             
-            # Try to match selector to a form_data key
-            if selector in form_data:
-                text = form_data[selector]
-            else:
-                # Try to match by field name or ID
-                for field_key, field_value in form_data.items():
-                    # Check if selector contains the field key
-                    if field_key.lower() in selector.lower():
-                        text = field_value
-                        break
+            if user_context_dict:
+                # Convert dict to ActionContext if needed
+                if isinstance(user_context_dict, dict) and "form_data" in user_context_dict:
+                    form_data = user_context_dict.get("form_data", {})
+                elif isinstance(user_context_dict, ActionContext):
+                    form_data = user_context_dict.form_data
+                else:
+                    form_data = {}
+                
+                if form_data:
+                    # Try to match selector to a form_data key
+                    if selector in form_data:
+                        text = form_data[selector]
+                    else:
+                        # Try to match by field name or ID
+                        for field_key, field_value in form_data.items():
+                            # Check if selector contains the field key
+                            if field_key.lower() in selector.lower():
+                                text = field_value
+                                break
         
         if not selector:
             return ToolResult.error_result("Selector is required")
@@ -1209,21 +1221,21 @@ class UploadFileTool(BaseTool):
     def metadata(self) -> ToolMetadata:
         return ToolMetadata(
             name="upload_file",
-            description="Upload a file to a file input element. Supports single or multiple files.",
+            description="Upload a file to a file input element. Supports single or multiple files. Supports context-based uploads via files array.",
             category=ToolCategory.INTERACTION,
             safety_level=SafetyLevel.MODERATE,
             parameters=[
                 ToolParameter(
                     name="selector",
                     type="string",
-                    description="CSS selector or description of the file input element",
-                    required=True,
+                    description="CSS selector or description of the file input element (or provide via context files)",
+                    required=False,
                 ),
                 ToolParameter(
                     name="file_path",
                     type="string",
-                    description="Path to the file to upload (or comma-separated paths for multiple files)",
-                    required=True,
+                    description="Path to the file to upload (or comma-separated paths for multiple files, or provide via context files)",
+                    required=False,
                 ),
                 ToolParameter(
                     name="use_ai",
@@ -1232,40 +1244,72 @@ class UploadFileTool(BaseTool):
                     required=False,
                 ),
             ],
+            expected_context_types=["files"],  # This tool can use files context
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute file upload.
         
         Supports both explicit file_path parameter and context-based uploads.
-        Context format: {"files": [{"field": "selector", "path": "file.pdf", "mime_type": "..."}]}
+        Context is provided via ActionContext with files (list of FileUploadSpec).
         """
+        from flybrowser.agents.context import ActionContext, FileUploadSpec
+        
         selector = kwargs.get("selector")
         file_path = kwargs.get("file_path")
         use_ai = kwargs.get("use_ai", False)
 
-        # Check if selector is not provided - try to get from context
+        # Check if selector is not provided - try to get from ActionContext
         if not selector:
-            # Try to get first file from context
-            user_context = self.get_user_context()
-            files_from_context = user_context.get("files", [])
-            if files_from_context and len(files_from_context) > 0:
-                first_file = files_from_context[0]
-                selector = first_file.get("field")
-                if not file_path:
-                    file_path = first_file.get("path")
+            user_context_dict = self.get_user_context()
+            
+            if user_context_dict:
+                # Convert dict to ActionContext if needed
+                files_list = []
+                if isinstance(user_context_dict, dict) and "files" in user_context_dict:
+                    files_list = user_context_dict.get("files", [])
+                elif isinstance(user_context_dict, ActionContext):
+                    files_list = user_context_dict.files
+                
+                if files_list and len(files_list) > 0:
+                    first_file = files_list[0]
+                    if isinstance(first_file, FileUploadSpec):
+                        selector = first_file.field
+                        if not file_path:
+                            file_path = first_file.path
+                    elif isinstance(first_file, dict):
+                        selector = first_file.get("field")
+                        if not file_path:
+                            file_path = first_file.get("path")
         
         if not selector:
             return ToolResult.error_result("Selector is required (or provide context with files array)")
         
         # If file_path still not provided, check context for matching field
         if not file_path:
-            user_context = self.get_user_context()
-            files_from_context = user_context.get("files", [])
-            for file_info in files_from_context:
-                if file_info.get("field") == selector:
-                    file_path = file_info.get("path")
-                    break
+            user_context_dict = self.get_user_context()
+            
+            if user_context_dict:
+                files_list = []
+                if isinstance(user_context_dict, dict) and "files" in user_context_dict:
+                    files_list = user_context_dict.get("files", [])
+                elif isinstance(user_context_dict, ActionContext):
+                    files_list = user_context_dict.files
+                
+                for file_info in files_list:
+                    file_field = None
+                    file_path_candidate = None
+                    
+                    if isinstance(file_info, FileUploadSpec):
+                        file_field = file_info.field
+                        file_path_candidate = file_info.path
+                    elif isinstance(file_info, dict):
+                        file_field = file_info.get("field")
+                        file_path_candidate = file_info.get("path")
+                    
+                    if file_field == selector and file_path_candidate:
+                        file_path = file_path_candidate
+                        break
         
         if not file_path:
             return ToolResult.error_result("File path is required (or provide context with files array)")

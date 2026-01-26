@@ -73,6 +73,8 @@ class ToolMetadata:
     # Model capability requirements
     required_capabilities: List[ModelCapability] = field(default_factory=list)  # Must have these
     optimal_capabilities: List[ModelCapability] = field(default_factory=list)  # Works better with these
+    # Context type support (from flybrowser.agents.context.ContextType)
+    expected_context_types: List[str] = field(default_factory=list)  # Context types this tool can use
     
     def to_json_schema(self) -> Dict[str, Any]:
         """Generate JSON schema for tool parameters."""

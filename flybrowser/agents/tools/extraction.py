@@ -53,8 +53,30 @@ class ExtractTextTool(BaseTool):
         """Execute text extraction.
         
         If no selector is provided, extracts all visible text from the page body.
+        Supports context-based filtering via filters and preferences.
         """
+        from flybrowser.agents.context import ActionContext
+        
         selector = kwargs.get("selector")
+        
+        # Get context for filtering/preferences
+        user_context_dict = self.get_user_context()
+        filters = {}
+        preferences = {}
+        
+        if user_context_dict:
+            if isinstance(user_context_dict, dict):
+                filters = user_context_dict.get("filters", {})
+                preferences = user_context_dict.get("preferences", {})
+            elif isinstance(user_context_dict, ActionContext):
+                filters = user_context_dict.filters
+                preferences = user_context_dict.preferences
+        
+        # Get max items from preferences
+        max_headings = preferences.get("max_headings", 20)
+        max_nav_links = preferences.get("max_nav_links", 30)
+        max_paragraphs = preferences.get("max_paragraphs", 10)
+        max_footer_links = preferences.get("max_footer_links", 20)
         
         try:
             page = self._page_controller.page

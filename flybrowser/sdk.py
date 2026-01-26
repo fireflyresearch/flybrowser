@@ -1144,10 +1144,21 @@ class FlyBrowser:
                 self.react_agent.memory.working.set_scratch("current_title", current_title or "")
                 logger.debug(f"[extract] Page context: {current_url} - {current_title}")
             
-            # Store user-provided context for tool access
+            # Store user-provided context for tool access (convert to dict if ActionContext)
             if context:
-                self.react_agent.memory.working.set_scratch("user_context", context)
-                logger.debug(f"[extract] User context: {list(context.keys())}")
+                from flybrowser.agents.context import ActionContext, ContextValidator
+                
+                # Convert ActionContext to dict if needed
+                context_dict = context.to_dict() if isinstance(context, ActionContext) else context
+                
+                # Validate context if it's an ActionContext instance
+                if isinstance(context, ActionContext):
+                    is_valid, errors = ContextValidator.validate(context)
+                    if not is_valid:
+                        logger.warning(f"[extract] Context validation warnings: {'; '.join(errors)}")
+                
+                self.react_agent.memory.working.set_scratch("user_context", context_dict)
+                logger.debug(f"[extract] User context: {list(context_dict.keys())}")
         except Exception as e:
             logger.debug(f"[extract] Could not get page context: {e}")
         
@@ -1309,10 +1320,21 @@ class FlyBrowser:
                 self.react_agent.memory.working.set_scratch("current_title", current_title or "")
                 logger.debug(f"[act] Page context: {current_url} - {current_title}")
             
-            # Store user-provided context for tool access
+            # Store user-provided context for tool access (convert to dict if ActionContext)
             if context:
-                self.react_agent.memory.working.set_scratch("user_context", context)
-                logger.debug(f"[act] User context: {list(context.keys())}")
+                from flybrowser.agents.context import ActionContext, ContextValidator
+                
+                # Convert ActionContext to dict if needed
+                context_dict = context.to_dict() if isinstance(context, ActionContext) else context
+                
+                # Validate context if it's an ActionContext instance
+                if isinstance(context, ActionContext):
+                    is_valid, errors = ContextValidator.validate(context)
+                    if not is_valid:
+                        logger.warning(f"[act] Context validation warnings: {'; '.join(errors)}")
+                
+                self.react_agent.memory.working.set_scratch("user_context", context_dict)
+                logger.debug(f"[act] User context: {list(context_dict.keys())}")
         except Exception as e:
             logger.debug(f"[act] Could not get page context: {e}")
         
@@ -1545,10 +1567,21 @@ class FlyBrowser:
                 self.react_agent.memory.working.set_scratch("current_title", current_title or "")
                 logger.debug(f"[agent] Page context: {current_url} - {current_title}")
             
-            # Store user-provided context for tool access
+            # Store user-provided context for tool access (convert to dict if ActionContext)
             if context:
-                self.react_agent.memory.working.set_scratch("user_context", context)
-                logger.debug(f"[agent] User context: {list(context.keys())}")
+                from flybrowser.agents.context import ActionContext, ContextValidator
+                
+                # Convert ActionContext to dict if needed
+                context_dict = context.to_dict() if isinstance(context, ActionContext) else context
+                
+                # Validate context if it's an ActionContext instance
+                if isinstance(context, ActionContext):
+                    is_valid, errors = ContextValidator.validate(context)
+                    if not is_valid:
+                        logger.warning(f"[agent] Context validation warnings: {'; '.join(errors)}")
+                
+                self.react_agent.memory.working.set_scratch("user_context", context_dict)
+                logger.debug(f"[agent] User context: {list(context_dict.keys())}")
         except Exception as e:
             logger.debug(f"[agent] Could not get page context: {e}")
         
@@ -1739,10 +1772,21 @@ class FlyBrowser:
                     self.react_agent.memory.working.set_scratch("current_title", current_title or "")
                     logger.debug(f"[observe] Page context: {current_url} - {current_title}")
                 
-                # Store user-provided context for tool access
+                # Store user-provided context for tool access (convert to dict if ActionContext)
                 if context:
-                    self.react_agent.memory.working.set_scratch("user_context", context)
-                    logger.debug(f"[observe] User context: {list(context.keys())}")
+                    from flybrowser.agents.context import ActionContext, ContextValidator
+                    
+                    # Convert ActionContext to dict if needed
+                    context_dict = context.to_dict() if isinstance(context, ActionContext) else context
+                    
+                    # Validate context if it's an ActionContext instance
+                    if isinstance(context, ActionContext):
+                        is_valid, errors = ContextValidator.validate(context)
+                        if not is_valid:
+                            logger.warning(f"[observe] Context validation warnings: {'; '.join(errors)}")
+                    
+                    self.react_agent.memory.working.set_scratch("user_context", context_dict)
+                    logger.debug(f"[observe] User context: {list(context_dict.keys())}")
             except Exception as e:
                 logger.debug(f"[observe] Could not get page context: {e}")
             
