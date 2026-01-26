@@ -161,6 +161,45 @@ class BaseTool(ABC):
         """Get the JSON schema for tool parameters."""
         return self.metadata.to_json_schema()
 
+    async def execute_safe(self, **kwargs: Any) -> ToolResult:
+        """
+        Execute the tool with automatic parameter validation.
+        
+        This method validates parameters before calling execute() and handles
+        validation errors gracefully by returning an error ToolResult.
+        
+        This is the RECOMMENDED way to call tools from the agent framework,
+        as it ensures parameter validation is always performed.
+        
+        Args:
+            **kwargs: Tool-specific parameters as defined in metadata
+            
+        Returns:
+            ToolResult indicating success or failure
+        """
+        # Import ErrorCode from types
+        from flybrowser.agents.types import ErrorCode
+        
+        # Validate parameters first
+        is_valid, error = self.validate_parameters(kwargs)
+        if not is_valid:
+            return ToolResult.error_result(
+                error=error,
+                error_code=ErrorCode.INVALID_PARAMS,
+                metadata={"tool": self.name, "params": kwargs}
+            )
+        
+        # Execute the tool
+        try:
+            return await self.execute(**kwargs)
+        except Exception as e:
+            # Catch any unexpected exceptions and return as ToolResult
+            return ToolResult.error_result(
+                error=f"Tool execution failed: {str(e)}",
+                error_code=ErrorCode.EXECUTION_ERROR,
+                metadata={"tool": self.name, "exception_type": type(e).__name__}
+            )
+    
     @abstractmethod
     async def execute(self, **kwargs: Any) -> ToolResult:
         """
@@ -168,6 +207,9 @@ class BaseTool(ABC):
 
         This is the main entry point for tool execution. Subclasses must
         implement this method to define the tool's behavior.
+        
+        NOTE: Consider using execute_safe() instead, which automatically
+        validates parameters before execution.
 
         Args:
             **kwargs: Tool-specific parameters as defined in metadata
