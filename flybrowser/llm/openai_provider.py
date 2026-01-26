@@ -629,6 +629,14 @@ class OpenAIProvider(BaseLLMProvider):
                 prompt=prompt, system_prompt=system_prompt or ""
             )
 
+            # OpenAI requires 'json' in messages when using response_format={"type": "json_object"}
+            # Add safety check and inject if missing from both prompt and system_prompt
+            combined_text = (prompt + (system_prompt or "")).lower()
+            if "json" not in combined_text:
+                # Inject JSON instruction into prompt to satisfy OpenAI API requirement
+                prompt = prompt + "\n\nRespond with valid JSON."
+                logger.debug("[OpenAI] Injected 'json' into prompt to satisfy API requirement")
+
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
@@ -736,6 +744,14 @@ class OpenAIProvider(BaseLLMProvider):
                 f"[VISION] Preparing {len(images)} image(s) for upload "
                 f"(~{total_image_bytes // 1024}KB total)"
             )
+            
+            # OpenAI requires 'json' in messages when using response_format={"type": "json_object"}
+            # Add safety check and inject if missing from both prompt and system_prompt
+            combined_text = (prompt + (system_prompt or "")).lower()
+            if "json" not in combined_text:
+                # Inject JSON instruction into prompt to satisfy OpenAI API requirement
+                prompt = prompt + "\n\nRespond with valid JSON."
+                logger.debug("[OpenAI] Injected 'json' into vision prompt to satisfy API requirement")
             
             # Log request
             start_time = self._log_llm_request(

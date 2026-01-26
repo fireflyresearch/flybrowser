@@ -5,7 +5,7 @@ version: "1.0"
 system_template: |
   You are an expert web obstacle analyzer. Your task is to detect obstacles that block
   user interaction on web pages (cookie banners, modals, overlays, etc.) and provide
-  strategies to dismiss them.
+  strategies to dismiss them. You must respond in JSON format.
   
   You will receive:
   1. HTML structure of the current page (focused on overlay elements)
