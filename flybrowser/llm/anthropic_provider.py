@@ -38,11 +38,14 @@ The provider handles:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import random
+import re
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
-from anthropic import AsyncAnthropic
+from anthropic import AsyncAnthropic, RateLimitError
 
 import os
 
@@ -159,6 +162,74 @@ class AnthropicProvider(BaseLLMProvider):
         
         return capabilities
 
+    async def _execute_with_retry(self, api_call_func, **kwargs):
+        """
+        Execute an API call with automatic rate limit retry.
+        
+        Handles rate limit errors (429) with exponential backoff and jitter.
+        
+        Args:
+            api_call_func: Async function to call (e.g., self.client.messages.create)
+            **kwargs: Arguments to pass to the API call
+            
+        Returns:
+            The API response
+            
+        Raises:
+            The original exception if all retries are exhausted or it's a non-retryable error
+        """
+        max_retries = 3
+        base_delay = 1.0
+        max_delay = 60.0
+        
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                return await api_call_func(**kwargs)
+                
+            except RateLimitError as e:
+                last_exception = e
+                
+                if attempt >= max_retries:
+                    logger.error(
+                        f"[Anthropic] Rate limit: max retries ({max_retries}) exhausted. "
+                        f"Last error: {e}"
+                    )
+                    raise
+                
+                # Parse retry delay from error message if available
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                error_msg = str(e)
+                
+                if "try again in" in error_msg.lower():
+                    try:
+                        match = re.search(r'try again in (\d+(?:\.\d+)?)(ms|s)', error_msg.lower())
+                        if match:
+                            value = float(match.group(1))
+                            unit = match.group(2)
+                            if unit == 'ms':
+                                delay = value / 1000.0
+                            else:
+                                delay = value
+                            delay = delay + 0.5  # Buffer
+                    except Exception:
+                        pass
+                
+                # Add jitter (±25%)
+                delay = delay * (0.75 + random.random() * 0.5)
+                delay = min(delay, max_delay)
+                
+                logger.warning(
+                    f"[Anthropic] Rate limit hit (attempt {attempt + 1}/{max_retries + 1}). "
+                    f"Waiting {delay:.2f}s before retry..."
+                )
+                await asyncio.sleep(delay)
+                continue
+        
+        if last_exception:
+            raise last_exception
+
 
     @classmethod
     def check_availability(cls) -> ProviderStatus:
@@ -235,8 +306,9 @@ class AnthropicProvider(BaseLLMProvider):
                 prompt=prompt, system_prompt=system_prompt or ""
             )
 
-            # Call Anthropic Messages API
-            response = await self.client.messages.create(
+            # Call Anthropic Messages API with retry
+            response = await self._execute_with_retry(
+                self.client.messages.create,
                 model=self.model,
                 max_tokens=max_tokens or 8192,  # Generous default to avoid truncation
                 temperature=temperature,
@@ -339,7 +411,8 @@ class AnthropicProvider(BaseLLMProvider):
 
             content.append({"type": "text", "text": prompt})
 
-            response = await self.client.messages.create(
+            response = await self._execute_with_retry(
+                self.client.messages.create,
                 model=self.model,
                 max_tokens=max_tokens or 8192,  # Generous default to avoid truncation
                 temperature=temperature,
@@ -394,7 +467,8 @@ class AnthropicProvider(BaseLLMProvider):
                 prompt=prompt, system_prompt=full_system_prompt
             )
 
-            response = await self.client.messages.create(
+            response = await self._execute_with_retry(
+                self.client.messages.create,
                 model=self.model,
                 max_tokens=8192,  # Generous default to avoid truncation
                 temperature=temperature,
@@ -526,7 +600,8 @@ class AnthropicProvider(BaseLLMProvider):
             
             content.append({"type": "text", "text": prompt})
             
-            response = await self.client.messages.create(
+            response = await self._execute_with_retry(
+                self.client.messages.create,
                 model=self.model,
                 max_tokens=max_tokens or 8192,  # Generous default to avoid truncation
                 temperature=temperature,
@@ -614,7 +689,9 @@ class AnthropicProvider(BaseLLMProvider):
             if tool_choice:
                 api_kwargs["tool_choice"] = {"type": tool_choice}
 
-            response = await self.client.messages.create(**api_kwargs)
+            response = await self._execute_with_retry(
+                self.client.messages.create, **api_kwargs
+            )
 
             # Extract tool calls if present
             tool_calls = None

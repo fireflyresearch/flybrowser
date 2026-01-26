@@ -42,12 +42,15 @@ API Documentation: https://www.alibabacloud.com/help/en/model-studio/qwen-api-re
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
+import random
+import re
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 from flybrowser.exceptions import LLMProviderError
 from flybrowser.llm.base import (
@@ -249,7 +252,9 @@ class QwenProvider(BaseLLMProvider):
                 if key in kwargs:
                     api_kwargs[key] = kwargs[key]
 
-            response = await self.client.chat.completions.create(**api_kwargs)
+            response = await self._execute_with_retry(
+                self.client.chat.completions.create, **api_kwargs
+            )
 
             total_tokens = response.usage.total_tokens if response.usage else 0
             response_content = response.choices[0].message.content or ""
@@ -366,7 +371,9 @@ class QwenProvider(BaseLLMProvider):
             else:
                 api_kwargs["max_tokens"] = 8192  # Generous default for vision
 
-            response = await self.client.chat.completions.create(**api_kwargs)
+            response = await self._execute_with_retry(
+                self.client.chat.completions.create, **api_kwargs
+            )
 
             total_tokens = response.usage.total_tokens if response.usage else 0
             response_content = response.choices[0].message.content or ""
@@ -439,7 +446,9 @@ class QwenProvider(BaseLLMProvider):
                 "response_format": {"type": "json_object"},
             }
 
-            response = await self.client.chat.completions.create(**api_kwargs)
+            response = await self._execute_with_retry(
+                self.client.chat.completions.create, **api_kwargs
+            )
 
             content = response.choices[0].message.content or "{}"
             total_tokens = response.usage.total_tokens if response.usage else 0
@@ -552,7 +561,9 @@ class QwenProvider(BaseLLMProvider):
                 "response_format": {"type": "json_object"},
             }
             
-            response = await self.client.chat.completions.create(**api_kwargs)
+            response = await self._execute_with_retry(
+                self.client.chat.completions.create, **api_kwargs
+            )
             
             total_tokens = response.usage.total_tokens if response.usage else 0
             response_content = response.choices[0].message.content or "{}"
@@ -642,7 +653,9 @@ class QwenProvider(BaseLLMProvider):
             if tool_choice:
                 api_kwargs["tool_choice"] = tool_choice
 
-            response = await self.client.chat.completions.create(**api_kwargs)
+            response = await self._execute_with_retry(
+                self.client.chat.completions.create, **api_kwargs
+            )
 
             # Extract tool calls if present
             tool_calls = None
@@ -748,6 +761,74 @@ class QwenProvider(BaseLLMProvider):
             capabilities.append(ModelCapability.EXTENDED_THINKING)
 
         return capabilities
+
+    async def _execute_with_retry(self, api_call_func, **kwargs):
+        """
+        Execute an API call with automatic rate limit retry.
+        
+        Handles rate limit errors (429) with exponential backoff and jitter.
+        
+        Args:
+            api_call_func: Async function to call (e.g., self.client.chat.completions.create)
+            **kwargs: Arguments to pass to the API call
+            
+        Returns:
+            The API response
+            
+        Raises:
+            The original exception if all retries are exhausted or it's a non-retryable error
+        """
+        max_retries = 3
+        base_delay = 1.0
+        max_delay = 60.0
+        
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                return await api_call_func(**kwargs)
+                
+            except RateLimitError as e:
+                last_exception = e
+                
+                if attempt >= max_retries:
+                    logger.error(
+                        f"[Qwen] Rate limit: max retries ({max_retries}) exhausted. "
+                        f"Last error: {e}"
+                    )
+                    raise
+                
+                # Parse retry delay from error message if available
+                delay = base_delay * (2 ** attempt)
+                error_msg = str(e)
+                
+                if "try again in" in error_msg.lower():
+                    try:
+                        match = re.search(r'try again in (\d+(?:\.\d+)?)(ms|s)', error_msg.lower())
+                        if match:
+                            value = float(match.group(1))
+                            unit = match.group(2)
+                            if unit == 'ms':
+                                delay = value / 1000.0
+                            else:
+                                delay = value
+                            delay = delay + 0.5  # Buffer
+                    except Exception:
+                        pass
+                
+                # Add jitter (±25%)
+                delay = delay * (0.75 + random.random() * 0.5)
+                delay = min(delay, max_delay)
+                
+                logger.warning(
+                    f"[Qwen] Rate limit hit (attempt {attempt + 1}/{max_retries + 1}). "
+                    f"Waiting {delay:.2f}s before retry..."
+                )
+                await asyncio.sleep(delay)
+                continue
+        
+        if last_exception:
+            raise last_exception
 
     def get_model_info(self) -> ModelInfo:
         """

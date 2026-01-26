@@ -199,7 +199,19 @@ class RateLimiter:
 
         Args:
             tokens: Number of tokens for this request
+            
+        Raises:
+            ValueError: If a single request exceeds the TPM limit (impossible to satisfy)
         """
+        # CRITICAL: Check if single request exceeds TPM limit
+        # If tokens > TPM, no amount of waiting will help - the request will always fail
+        if tokens > self.config.tokens_per_minute:
+            raise ValueError(
+                f"Single request ({tokens:,} tokens) exceeds tokens_per_minute limit "
+                f"({self.config.tokens_per_minute:,}). This request cannot be satisfied. "
+                f"Reduce prompt size or increase TPM limit in configuration."
+            )
+        
         now = time.time()
         cutoff = now - 60  # 1 minute ago
 

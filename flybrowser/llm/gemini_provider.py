@@ -37,8 +37,11 @@ The provider handles:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import random
+import re
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 import os
@@ -182,19 +185,81 @@ class GeminiProvider(BaseLLMProvider):
         payload: Dict[str, Any],
         stream: bool = False,
     ) -> Dict[str, Any]:
-        """Make an HTTP request to the Gemini API."""
+        """
+        Make an HTTP request to the Gemini API with rate limit retry.
+        
+        Handles rate limit errors (429) with exponential backoff and jitter.
+        """
         url = f"{self.base_url}/models/{self.model}:{endpoint}?key={self.api_key}"
-
         headers = {"Content-Type": "application/json"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise LLMProviderError(
-                        f"Gemini API request failed: {response.status} - {error_text}"
+        
+        max_retries = 3
+        base_delay = 1.0
+        max_delay = 60.0
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload, headers=headers) as response:
+                        if response.status == 429:
+                            # Rate limit - will retry
+                            error_text = await response.text()
+                            raise LLMProviderError(
+                                f"Rate limit: {response.status} - {error_text}"
+                            )
+                        elif response.status != 200:
+                            error_text = await response.text()
+                            raise LLMProviderError(
+                                f"Gemini API request failed: {response.status} - {error_text}"
+                            )
+                        return await response.json()
+                        
+            except LLMProviderError as e:
+                error_msg = str(e)
+                if "429" in error_msg or "rate limit" in error_msg.lower():
+                    last_exception = e
+                    
+                    if attempt >= max_retries:
+                        logger.error(
+                            f"[Gemini] Rate limit: max retries ({max_retries}) exhausted. "
+                            f"Last error: {e}"
+                        )
+                        raise
+                    
+                    # Parse retry delay from error message if available
+                    delay = base_delay * (2 ** attempt)
+                    
+                    if "try again in" in error_msg.lower():
+                        try:
+                            match = re.search(r'try again in (\d+(?:\.\d+)?)(ms|s)', error_msg.lower())
+                            if match:
+                                value = float(match.group(1))
+                                unit = match.group(2)
+                                if unit == 'ms':
+                                    delay = value / 1000.0
+                                else:
+                                    delay = value
+                                delay = delay + 0.5
+                        except Exception:
+                            pass
+                    
+                    # Add jitter (±25%)
+                    delay = delay * (0.75 + random.random() * 0.5)
+                    delay = min(delay, max_delay)
+                    
+                    logger.warning(
+                        f"[Gemini] Rate limit hit (attempt {attempt + 1}/{max_retries + 1}). "
+                        f"Waiting {delay:.2f}s before retry..."
                     )
-                return await response.json()
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Non-rate-limit error, re-raise immediately
+                    raise
+        
+        if last_exception:
+            raise last_exception
 
     async def generate(
         self,

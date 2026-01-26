@@ -39,11 +39,13 @@ The provider handles:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import random
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 import os
 
@@ -259,14 +261,17 @@ class OpenAIProvider(BaseLLMProvider):
         original_max_tokens: Optional[int],
     ):
         """
-        Execute an API call with automatic reasoning model detection and retry.
+        Execute an API call with automatic reasoning model detection and rate limit retry.
         
-        If the call fails due to reasoning model restrictions (temperature or
-        max_tokens errors), this method:
-        1. Detects the model as a reasoning model
-        2. Updates the registry cache
-        3. Rebuilds the kwargs with correct parameters
-        4. Retries the request
+        This method handles:
+        1. Rate limit errors (429) with exponential backoff retry
+        2. Reasoning model detection and parameter correction
+        
+        Rate limit retry configuration:
+        - Max retries: 3 attempts
+        - Initial delay: 1 second (or from API response)
+        - Exponential backoff with jitter
+        - Max delay: 60 seconds
         
         Args:
             api_call_func: Async function to call (e.g., self.client.chat.completions.create)
@@ -278,39 +283,95 @@ class OpenAIProvider(BaseLLMProvider):
             The API response
             
         Raises:
-            The original exception if it's not a reasoning model error
+            The original exception if all retries are exhausted or it's a non-retryable error
         """
-        try:
-            return await api_call_func(**api_kwargs)
-        except Exception as e:
-            if self._is_reasoning_model_error(e):
-                # Detected as reasoning model - update registry and retry
-                self._mark_as_reasoning_model()
+        max_retries = 3
+        base_delay = 1.0
+        max_delay = 60.0
+        
+        last_exception = None
+        current_kwargs = api_kwargs
+        
+        for attempt in range(max_retries + 1):
+            try:
+                return await api_call_func(**current_kwargs)
                 
-                # Rebuild kwargs with corrected parameters
-                # Extract messages from original kwargs
-                messages = api_kwargs.get("messages", [])
+            except RateLimitError as e:
+                last_exception = e
                 
-                # Filter to only valid OpenAI API parameters, excluding ones we'll rebuild
-                excluded_params = {"temperature", "max_tokens", "max_completion_tokens", "messages", "model"}
-                retry_kwargs = {
-                    k: v for k, v in api_kwargs.items() 
-                    if k in self._VALID_OPENAI_API_PARAMS and k not in excluded_params
-                }
+                if attempt >= max_retries:
+                    logger.error(
+                        f"[OpenAI] Rate limit: max retries ({max_retries}) exhausted. "
+                        f"Last error: {e}"
+                    )
+                    raise
                 
-                # Rebuild with correct parameters
-                corrected_kwargs = self._build_api_kwargs(
-                    messages=messages,
-                    temperature=original_temperature,
-                    max_tokens=original_max_tokens,
-                    **retry_kwargs,
+                # Parse retry delay from error message if available
+                # Error format: "Please try again in 734ms"
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                error_msg = str(e)
+                
+                if "try again in" in error_msg.lower():
+                    try:
+                        # Extract delay from message
+                        import re
+                        match = re.search(r'try again in (\d+(?:\.\d+)?)(ms|s)', error_msg.lower())
+                        if match:
+                            value = float(match.group(1))
+                            unit = match.group(2)
+                            if unit == 'ms':
+                                delay = value / 1000.0
+                            else:
+                                delay = value
+                            # Add some buffer
+                            delay = delay + 0.5
+                    except Exception:
+                        pass  # Use calculated delay
+                
+                # Add jitter (±25%)
+                delay = delay * (0.75 + random.random() * 0.5)
+                delay = min(delay, max_delay)
+                
+                logger.warning(
+                    f"[OpenAI] Rate limit hit (attempt {attempt + 1}/{max_retries + 1}). "
+                    f"Waiting {delay:.2f}s before retry..."
                 )
+                await asyncio.sleep(delay)
+                continue
                 
-                logger.debug(f"[OpenAI] Retrying request with corrected parameters for reasoning model")
-                return await api_call_func(**corrected_kwargs)
-            else:
-                # Not a reasoning model error - re-raise
-                raise
+            except Exception as e:
+                if self._is_reasoning_model_error(e):
+                    # Detected as reasoning model - update registry and retry
+                    self._mark_as_reasoning_model()
+                    
+                    # Rebuild kwargs with corrected parameters
+                    messages = current_kwargs.get("messages", [])
+                    
+                    # Filter to only valid OpenAI API parameters
+                    excluded_params = {"temperature", "max_tokens", "max_completion_tokens", "messages", "model"}
+                    retry_kwargs = {
+                        k: v for k, v in current_kwargs.items() 
+                        if k in self._VALID_OPENAI_API_PARAMS and k not in excluded_params
+                    }
+                    
+                    # Rebuild with correct parameters
+                    current_kwargs = self._build_api_kwargs(
+                        messages=messages,
+                        temperature=original_temperature,
+                        max_tokens=original_max_tokens,
+                        **retry_kwargs,
+                    )
+                    
+                    logger.debug(f"[OpenAI] Retrying request with corrected parameters for reasoning model")
+                    # Continue to retry with corrected kwargs
+                    continue
+                else:
+                    # Not a retryable error - re-raise immediately
+                    raise
+        
+        # Should not reach here, but just in case
+        if last_exception:
+            raise last_exception
 
     @classmethod
     def check_availability(cls) -> ProviderStatus:
