@@ -803,7 +803,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             
             print("\nResources:")
             print("  Documentation: https://flybrowser.dev/docs")
-            print("  GitHub:        https://github.com/firefly-oss/flybrowsers")
+            print("  GitHub:        https://github.com/firefly-research/flybrowsers")
             print("  Discord:       https://discord.gg/flybrowser")
             print("")
             print("=" * 70)
