@@ -13,12 +13,11 @@
 # limitations under the License.
 
 """
-Base LLM provider interface with production features.
+Base LLM provider interface.
 
 This module defines the abstract base class for all LLM providers in FlyBrowser.
 It provides a unified interface for interacting with different LLM services
-(OpenAI, Anthropic, Ollama, Google Gemini, etc.) and includes production-ready
-features like caching, retry logic, rate limiting, and cost tracking.
+(OpenAI, Anthropic, Ollama, Google Gemini, etc.).
 
 The module also defines the LLMResponse dataclass which standardizes responses
 across all providers.
@@ -31,7 +30,6 @@ Key Features:
 - Structured output with JSON schemas
 - Embeddings generation
 - Model capability introspection
-- Production features (caching, retry, rate limiting, cost tracking)
 """
 
 from __future__ import annotations
@@ -43,28 +41,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
 from flybrowser.llm.provider_status import ProviderStatus
 from flybrowser.utils.logger import logger
-from flybrowser.utils.execution_logger import get_execution_logger, LogVerbosity
-
-
-# Stubs for removed modules (functionality now handled by fireflyframework-genai)
-class LLMCache:
-    """Stub -- caching is now handled by fireflyframework-genai."""
-
-
-class LLMProviderConfig:
-    """Stub -- provider config is now handled by fireflyframework-genai model strings."""
-
-
-class CostTracker:
-    """Stub -- cost tracking is now handled by fireflyframework-genai."""
-
-
-class RateLimiter:
-    """Stub -- rate limiting is now handled by fireflyframework-genai."""
-
-
-class RetryHandler:
-    """Stub -- retry logic is now handled by fireflyframework-genai."""
+from flybrowser.utils.execution_logger import get_execution_logger
 
 
 class ModelCapability(str, Enum):
@@ -214,11 +191,9 @@ class LLMResponse:
 
 class BaseLLMProvider(ABC):
     """
-    Abstract base class for LLM providers with production features.
+    Abstract base class for LLM providers.
 
     This class defines the interface that all LLM providers must implement.
-    It also provides production-ready features like caching, retry logic,
-    rate limiting, and cost tracking when configured.
 
     Subclasses must implement:
     - generate(): Basic text generation
@@ -228,12 +203,7 @@ class BaseLLMProvider(ABC):
     Attributes:
         model: Model name/identifier
         api_key: API key for the LLM provider (e.g., OpenAI API key)
-        provider_config: Full provider configuration
         extra_config: Additional provider-specific configuration
-        cache: LLM response cache (if configured)
-        cost_tracker: Token usage and cost tracker (if configured)
-        rate_limiter: Rate limiter for API requests (if configured)
-        retry_handler: Retry handler with exponential backoff (if configured)
 
     Example:
         Subclass implementation:
@@ -248,59 +218,35 @@ class BaseLLMProvider(ABC):
         self,
         model: str,
         api_key: Optional[str] = None,
-        config: Optional[LLMProviderConfig] = None,
         **kwargs: Any,
     ) -> None:
         """
-        Initialize the LLM provider with configuration.
+        Initialize the LLM provider.
 
         Args:
             model: Model name/identifier (e.g., "gpt-4o", "claude-3-5-sonnet-20241022")
             api_key: API key for the LLM provider (e.g., OpenAI API key, Anthropic API key).
                 Not required for local providers like Ollama.
-            config: Full provider configuration including retry, cache, rate limit settings.
-                If not provided, production features will be disabled.
             **kwargs: Additional provider-specific configuration options:
                 - llm_logging: Enable LLM request/response logging (default: False)
                 - vision_enabled: Override auto-detected vision capability (Optional[bool])
                     - None: Use auto-detected capabilities (default)
                     - True: Force vision enabled
                     - False: Force vision disabled
-
-        Note:
-            When config is provided, the following production features are enabled:
-            - Response caching (LRU cache with TTL)
-            - Automatic retry with exponential backoff
-            - Rate limiting (requests/min and tokens/min)
-            - Cost tracking and reporting
         """
         self.model = model
         self.api_key = api_key
-        self.provider_config = config
         self.extra_config = kwargs
-        
+
         # Vision capability override
         # None = use auto-detected, True = force on, False = force off
         self._vision_enabled_override: Optional[bool] = kwargs.get("vision_enabled")
-        
+
         # Standardized capability caching (all providers should use these)
         self._capabilities_detected: bool = False
         self._model_capabilities_cache: Optional[List[ModelCapability]] = None
         self._model_info_cache: Optional[ModelInfo] = None
 
-        # Initialize production features if config provided
-        if config:
-            self.cache = LLMCache(config.cache_config)
-            self.cost_tracker = CostTracker(config.cost_tracking_config)
-            self.rate_limiter = RateLimiter(config.rate_limit_config)
-            self.retry_handler = RetryHandler(config.retry_config)
-        else:
-            # No config provided - production features disabled
-            self.cache = None
-            self.cost_tracker = None
-            self.rate_limiter = None
-            self.retry_handler = None
-        
         # Session-level usage tracking (always enabled)
         self._session_prompt_tokens = 0
         self._session_completion_tokens = 0
@@ -320,98 +266,6 @@ class BaseLLMProvider(ABC):
         
         # Execution logger for hierarchical logging
         self._elog = get_execution_logger()
-
-    async def generate_with_features(
-        self,
-        prompt: str,
-        system_prompt: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        use_cache: bool = True,
-        **kwargs: Any,
-    ) -> LLMResponse:
-        """
-        Generate with production features (caching, rate limiting, retry, cost tracking).
-
-        Args:
-            prompt: User prompt
-            system_prompt: System prompt
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens
-            use_cache: Whether to use caching
-            **kwargs: Additional parameters
-
-        Returns:
-            LLMResponse object
-        """
-        # Check cache first
-        if use_cache and self.cache:
-            cached_response = self.cache.get(
-                prompt, system_prompt, self.model, temperature, **kwargs
-            )
-            if cached_response:
-                logger.debug("Returning cached response")
-                cached_response.cached = True
-                return cached_response
-
-        # Acquire rate limit
-        if self.rate_limiter:
-            estimated_tokens = len(prompt.split()) * 2  # Rough estimate
-            await self.rate_limiter.acquire(estimated_tokens)
-
-        try:
-            # Execute with retry
-            if self.retry_handler:
-                response = await self.retry_handler.execute_with_retry(
-                    self._generate_impl,
-                    prompt,
-                    system_prompt,
-                    temperature,
-                    max_tokens,
-                    **kwargs,
-                )
-            else:
-                response = await self._generate_impl(
-                    prompt, system_prompt, temperature, max_tokens, **kwargs
-                )
-
-            # Track cost
-            if response.usage:
-                prompt_tokens = response.usage.get("prompt_tokens", 0)
-                completion_tokens = response.usage.get("completion_tokens", 0)
-                
-                # Update session-level tracking
-                self._session_prompt_tokens += prompt_tokens
-                self._session_completion_tokens += completion_tokens
-                self._session_total_tokens += prompt_tokens + completion_tokens
-                self._session_calls += 1
-                
-                if self.cost_tracker:
-                    record = self.cost_tracker.record_usage(
-                        provider=self.__class__.__name__.replace("Provider", "").lower(),
-                        model=self.model,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        cached=False,
-                    )
-                    if record:
-                        self._session_cost += record.cost
-
-            # Cache response
-            if use_cache and self.cache:
-                self.cache.set(
-                    prompt, system_prompt, self.model, temperature, response, **kwargs
-                )
-
-            return response
-
-        finally:
-            # Release rate limit
-            if self.rate_limiter:
-                actual_tokens = (
-                    response.usage.get("total_tokens", 0) if response.usage else 0
-                )
-                self.rate_limiter.release(actual_tokens)
 
     def enable_llm_logging(self, enabled: bool = True, level: int = 1) -> None:
         """
@@ -610,17 +464,6 @@ class BaseLLMProvider(ABC):
         if last_exception:
             raise last_exception
         raise RuntimeError("Unexpected state in rate limit retry")
-
-    async def _generate_impl(
-        self,
-        prompt: str,
-        system_prompt: Optional[str],
-        temperature: float,
-        max_tokens: Optional[int],
-        **kwargs: Any,
-    ) -> LLMResponse:
-        """Internal implementation that calls the abstract generate method."""
-        return await self.generate(prompt, system_prompt, temperature, max_tokens, **kwargs)
 
     @abstractmethod
     async def generate(
@@ -890,24 +733,13 @@ class BaseLLMProvider(ABC):
         Get provider statistics.
 
         Returns:
-            Dictionary with stats including cache, cost, and rate limit info
+            Dictionary with model, provider, and capability info
         """
-        stats = {
+        return {
             "model": self.model,
             "provider": self.__class__.__name__,
             "capabilities": [c.value for c in self.get_model_info().capabilities],
         }
-
-        if self.cache:
-            stats["cache"] = self.cache.get_stats()
-
-        if self.cost_tracker:
-            stats["cost"] = self.cost_tracker.get_summary()
-
-        if self.rate_limiter:
-            stats["rate_limit"] = self.rate_limiter.get_stats()
-
-        return stats
     
     def get_session_usage(self) -> Dict[str, Any]:
         """
@@ -961,10 +793,10 @@ class BaseLLMProvider(ABC):
     def _track_usage(self, response: LLMResponse) -> None:
         """
         Track usage from an LLMResponse.
-        
+
         Call this after getting a response from generate() or generate_with_vision()
         to update session-level tracking.
-        
+
         Args:
             response: LLMResponse from a generate call
         """
@@ -973,19 +805,7 @@ class BaseLLMProvider(ABC):
             self._session_completion_tokens += response.usage.get("completion_tokens", 0)
             self._session_total_tokens += response.usage.get("total_tokens", 0)
             self._session_calls += 1
-            
-            # Track cost if cost_tracker is available
-            if self.cost_tracker:
-                record = self.cost_tracker.record_usage(
-                    provider=self.__class__.__name__.replace("Provider", "").lower(),
-                    model=self.model,
-                    prompt_tokens=response.usage.get("prompt_tokens", 0),
-                    completion_tokens=response.usage.get("completion_tokens", 0),
-                    cached=response.cached,
-                )
-                if record:
-                    self._session_cost += record.cost
-        
+
         if response.cached:
             self._session_cached_calls += 1
 
