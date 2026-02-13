@@ -27,6 +27,7 @@ from fireflyframework_genai.agents.builtin_middleware import (
     LoggingMiddleware,
 )
 from fireflyframework_genai.reasoning import ReActPattern
+from fireflyframework_genai.validation import OutputReviewer
 
 from flybrowser.agents.toolkits import create_all_toolkits
 from flybrowser.agents.memory.browser_memory import BrowserMemoryManager
@@ -115,13 +116,16 @@ class BrowserAgent:
         query: str,
         schema: Optional[Type] = None,
         context: Optional[dict] = None,
+        max_retries: int = 3,
     ) -> dict:
         prompt = _EXTRACT_PROMPT.format(query=query)
         if schema:
-            result = await self._agent.run(prompt, output_type=schema)
+            reviewer = OutputReviewer(output_type=schema, max_retries=max_retries)
+            review_result = await reviewer.review(self._agent, prompt)
+            return self._format_result(review_result.output, query)
         else:
             result = await self._agent.run(prompt)
-        return self._format_result(result, query)
+            return self._format_result(result, query)
 
     async def observe(self, query: str, context: Optional[dict] = None) -> dict:
         prompt = _OBSERVE_PROMPT.format(
