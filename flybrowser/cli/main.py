@@ -53,8 +53,6 @@ from pathlib import Path
 from typing import List, Optional
 
 from flybrowser.cli.output import CLIOutput
-from flybrowser.llm.factory import LLMProviderFactory
-from flybrowser.llm.provider_status import ProviderStatusLevel
 from flybrowser.utils.logger import LogFormat, configure_logging
 
 
@@ -171,30 +169,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         cli_output.print_status_line("WARN", "Could not verify browser installation", warn=True)
         checks.append(True)  # Not a hard failure
     
-    # Check 5: LLM providers (DYNAMIC DISCOVERY)
+    # Check 5: LLM providers
     cli_output.print_section("LLM Provider Status")
-    
-    # Use dynamic provider discovery from factory
-    provider_statuses = LLMProviderFactory.get_all_provider_statuses()
-    
-    for name, status in provider_statuses.items():
-        if status.level == ProviderStatusLevel.OK:
-            cli_output.print_status_line("OK", f"{status.name}: {status.message}", ok=True)
-        elif status.level == ProviderStatusLevel.INFO:
-            cli_output.print_status_line("INFO", f"{status.name}: {status.message}", info=True)
-        elif status.level == ProviderStatusLevel.WARN:
-            cli_output.print_status_line("WARN", f"{status.name}: {status.message}", warn=True)
-        else:
-            cli_output.print_status_line("FAIL", f"{status.name}: {status.message}", ok=False)
-    
-    # Show all registered providers and aliases
-    providers = LLMProviderFactory.list_providers(include_aliases=False)
-    aliases = LLMProviderFactory.get_aliases()
-    
-    print(f"\n  Providers: {', '.join(providers)}")
-    if aliases:
-        alias_strs = [f"{alias} → {target}" for alias, target in aliases.items()]
-        print(f"  Aliases: {', '.join(alias_strs)}")
+    cli_output.print_status_line(
+        "INFO",
+        "LLM provider discovery now handled by fireflyframework-genai SDK",
+        info=True,
+    )
     
     # Check 6: Config files
     cli_output.print_section("Configuration")

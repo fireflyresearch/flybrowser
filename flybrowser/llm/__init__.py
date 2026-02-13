@@ -14,10 +14,10 @@
 
 """LLM integration layer for FlyBrowser.
 
-Remaining modules (base, factory, provider_status, context_compressor) are
-kept for backward compatibility but have transitive dependencies on files
-removed in Task 16. They will be lazily importable once Task 17 completes
-the SDK switch.
+Remaining modules:
+    - base: BaseLLMProvider abstract interface
+    - structured_llm: StructuredLLMProvider for schema-validated responses
+    - provider_status: Provider health tracking
 """
 
 __all__: list[str] = []

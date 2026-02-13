@@ -262,9 +262,9 @@ class ElementDetector:
                 Should support vision capabilities for best results.
 
         Example:
-            >>> from flybrowser.llm.factory import LLMProviderFactory
-            >>> llm = LLMProviderFactory.create("openai", api_key="sk-...")
-            >>> detector = ElementDetector(page, llm)
+            >>> from flybrowser.llm.base import BaseLLMProvider
+            >>> # Use a BaseLLMProvider implementation
+            >>> detector = ElementDetector(page, llm_provider)
         """
         self.page = page
         self.llm = llm_provider

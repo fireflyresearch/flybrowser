@@ -34,7 +34,6 @@ from flybrowser.agents.schemas import PAGE_ANALYSIS_SCHEMA
 
 if TYPE_CHECKING:
     from flybrowser.llm.base import BaseLLMProvider
-    from flybrowser.prompts.manager import PromptManager
 
 logger = logging.getLogger(__name__)
 

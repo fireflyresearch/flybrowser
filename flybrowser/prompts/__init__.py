@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Professional prompt management system.
-
-Remaining modules (manager, registry) are kept for backward compatibility
-but have transitive dependencies on template.py which was removed in Task 16.
-They will be updated in Task 17.
-"""
+"""Professional prompt management system."""
 
 __all__: list[str] = []

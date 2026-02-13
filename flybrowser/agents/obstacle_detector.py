@@ -36,7 +36,6 @@ from playwright.async_api import Page
 
 from flybrowser.llm.base import BaseLLMProvider, ModelCapability, ImageInput
 from flybrowser.agents import obstacle_strategies
-from flybrowser.prompts.registry import PromptRegistry
 from flybrowser.agents.config import ObstacleDetectorConfig
 from flybrowser.agents.structured_llm import StructuredLLMWrapper
 from flybrowser.agents.schemas import OBSTACLE_DETECTION_SCHEMA
@@ -106,7 +105,6 @@ class ObstacleDetector:
         self.page = page
         self.llm = llm
         self.config = config or ObstacleDetectorConfig()
-        self.prompt_registry = PromptRegistry()
         self._conversation_manager = conversation_manager
     
     @property
@@ -350,27 +348,37 @@ class ObstacleDetector:
             Analysis result with obstacles and strategies
         """
         try:
-            # Select appropriate prompt template
-            template_name = "obstacle_detection_vlm" if has_vision else "obstacle_detection_llm"
-            template = self.prompt_registry.get(template_name)
-            
-            # Render template with context
-            rendered = template.render(
-                html_context=context.get("html_context", ""),
-                page_url=context.get("page_url", ""),
-                page_title=context.get("page_title", ""),
-                visible_text=context.get("visible_text", ""),
-                # Page metadata for VLM coordinate detection
-                viewport_width=context.get("viewport_width", 0),
-                viewport_height=context.get("viewport_height", 0),
-                scroll_x=context.get("scroll_x", 0),
-                scroll_y=context.get("scroll_y", 0),
-                page_width=context.get("page_width", 0),
-                page_height=context.get("page_height", 0),
+            # Build prompts inline (prompt registry/template system was removed)
+            system_prompt = (
+                "You are an expert web obstacle detector. Analyze the page for "
+                "blocking obstacles (cookie banners, modals, overlays, popups) "
+                "that prevent user interaction with the main content. "
+                "Respond in the JSON schema provided."
             )
-            
-            system_prompt = rendered.get("system", "")
-            user_content = rendered["user"]
+
+            page_url = context.get("page_url", "")
+            page_title = context.get("page_title", "")
+            html_context = context.get("html_context", "")
+            visible_text = context.get("visible_text", "")
+            viewport_w = context.get("viewport_width", 0)
+            viewport_h = context.get("viewport_height", 0)
+
+            if has_vision:
+                user_content = (
+                    f"Page: {page_url} - {page_title}\n"
+                    f"Viewport: {viewport_w}x{viewport_h}\n\n"
+                    "Examine the screenshot and the HTML below for blocking obstacles.\n\n"
+                    f"HTML context:\n{html_context}\n\n"
+                    f"Visible text sample:\n{visible_text[:1000]}"
+                )
+            else:
+                user_content = (
+                    f"Page: {page_url} - {page_title}\n\n"
+                    "Analyze the HTML and text below for blocking obstacles "
+                    "(cookie banners, modals, overlays, popups).\n\n"
+                    f"HTML context:\n{html_context}\n\n"
+                    f"Visible text sample:\n{visible_text[:1000]}"
+                )
             
             logger.debug(f"[ObstacleDetector] Calling AI with template: {template_name}")
             
