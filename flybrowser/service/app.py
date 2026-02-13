@@ -325,7 +325,7 @@ async def global_exception_handler(request, exc):
                 "application/json": {
                     "example": {
                         "status": "healthy",
-                        "version": "26.02.05",
+                        "version": "26.02.06",
                         "uptime_seconds": 3600.5,
                         "active_sessions": 5,
                         "system_info": {"sessions": 5}

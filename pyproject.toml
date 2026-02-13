@@ -1,6 +1,6 @@
 [project]
 name = "flybrowser"
-version = "26.02.05"
+version = "26.02.06"
 description = "A browser automation and web scraping framework driven by LLM agents"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -23,7 +23,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "openai>=1.0.0",
     "anthropic>=0.18.0",
-    "fireflyframework-genai>=26.02.05",
+    "fireflyframework-genai>=26.02.06",
     "pillow>=10.0.0",
     "aiohttp>=3.9.0",
     "python-dotenv>=1.0.0",

@@ -16,7 +16,7 @@ limitations under the License.
 
 # CLI Reference
 
-> **Version 26.02.05** | Python 3.13+ | Apache 2.0
+> **Version 26.02.06** | Python 3.13+ | Apache 2.0
 
 FlyBrowser provides a unified command-line interface for interactive browser automation, one-shot commands, workflow execution, server management, and administration.
 
@@ -671,13 +671,13 @@ flybrowser doctor
 
 ```
 +---------------------------------------------------------------+
-|  FlyBrowser v26.02.05                                         |
+|  FlyBrowser v26.02.06                                         |
 +---------------------------------------------------------------+
 
 System Requirements
 ----------------------------------------------------------------
 [OK]   Python 3.13.2
-[OK]   FlyBrowser 26.02.05 installed
+[OK]   FlyBrowser 26.02.06 installed
 [OK]   Playwright installed
 [OK]   Chromium browser available
 
@@ -716,11 +716,11 @@ flybrowser version [OPTIONS]
 
 ```bash
 flybrowser version
-# FlyBrowser 26.02.05
+# FlyBrowser 26.02.06
 
 flybrowser version --json
 # {
-#   "flybrowser": "26.02.05",
+#   "flybrowser": "26.02.06",
 #   "python": "3.13.2",
 #   "platform": "Darwin",
 #   "architecture": "arm64"

@@ -50,7 +50,7 @@ _/ ____\  | ___.__.\_ |_________  ______  _  ________ ___________
 [OK] Installed chromium
 
 [CHECK] Verifying installation...
-[OK] FlyBrowser 26.02.05 installed
+[OK] FlyBrowser 26.02.06 installed
 [OK] Playwright installed
 [OK] Chromium browser available
 
@@ -254,7 +254,7 @@ flybrowser setup verify
 
 ```
 [CHECK] Verifying installation...
-[OK] FlyBrowser 26.02.05 installed
+[OK] FlyBrowser 26.02.06 installed
 [OK] Playwright installed
 [OK] Chromium browser available
 ```

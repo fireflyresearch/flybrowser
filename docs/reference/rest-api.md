@@ -16,7 +16,7 @@ limitations under the License.
 
 # REST API Reference
 
-> **Version 26.02.05** | Python 3.13+ | Apache 2.0
+> **Version 26.02.06** | Python 3.13+ | Apache 2.0
 
 FlyBrowser exposes a comprehensive REST API built on [FastAPI](https://fastapi.tiangolo.com/) via the `fireflyframework-genai` application factory. The API supports session-based browser automation, AI-powered data extraction, live streaming, recording, and cluster orchestration.
 
@@ -130,7 +130,7 @@ Returns service health status. **No authentication required.**
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | string | Service status (e.g., `"healthy"`) |
-| `version` | string | FlyBrowser version (`"26.02.05"`) |
+| `version` | string | FlyBrowser version (`"26.02.06"`) |
 | `uptime_seconds` | float | Seconds since service start |
 | `active_sessions` | int | Current number of active sessions |
 | `system_info` | object | System information (e.g., `{"sessions": 5}`) |
@@ -142,7 +142,7 @@ curl http://localhost:8000/health
 ```json
 {
   "status": "healthy",
-  "version": "26.02.05",
+  "version": "26.02.06",
   "uptime_seconds": 3600.5,
   "active_sessions": 5,
   "system_info": {
