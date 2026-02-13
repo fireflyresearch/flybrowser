@@ -291,6 +291,53 @@ else:
         print(f"Price: {result.data}")
 ```
 
+## Multi-Element Selector Behavior
+
+Under the hood, `extract()` uses the `extract_text` tool to retrieve content from the
+page. When a CSS or XPath selector is used and it matches more than one element,
+`extract_text` applies safe multi-element handling instead of raising a Playwright
+strict-mode error. The rules are:
+
+| Condition | Result |
+|-----------|--------|
+| Selector matches **one** element | The text content of that element is returned directly. |
+| Selector matches **2 -- 10** elements | Text from every matching element is returned, separated by `---`, with a count indicator (e.g. "3 elements"). |
+| Selector matches **more than 10** elements | Text from the first 10 elements is returned with a note such as "showing 10 of 47". |
+| Selector matches **no** elements | An informative message `No elements found for selector '<selector>'` is returned instead of an error. |
+
+This is a key reliability improvement for content-rich pages (e.g. Wikipedia, news
+sites, search results) where generic selectors like `p`, `li`, or `a` can easily match
+hundreds of elements. Rather than failing with Playwright's strict-mode violation, the
+agent receives a bounded, readable summary it can reason about.
+
+### Example output for multiple matches
+
+When the selector `h2` matches five elements on a page, the tool returns:
+
+```
+Text content of 'h2' (5 elements):
+Introduction
+---
+Getting Started
+---
+Configuration
+---
+Advanced Usage
+---
+FAQ
+```
+
+When the selector `li` matches 25 elements, the tool returns:
+
+```
+Text content of 'li' (25 elements, showing 10 of 25):
+First item
+---
+Second item
+---
+...  (up to 10 items)
+```
+
 ## Best Practices
 
 ### Be Specific

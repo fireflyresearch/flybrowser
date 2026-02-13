@@ -191,6 +191,8 @@ A quick reference for the primary `FlyBrowser` methods. See the [SDK Reference](
 | `extract(query, context, use_vision, schema, return_metadata, max_iterations)` | Extract structured data |
 | `observe(query, context, return_selectors, return_metadata, max_iterations)` | Find page elements |
 | `agent(task, context, max_iterations, max_time_seconds, return_metadata)` | Autonomous multi-step execution |
+| `auto(goal, context, max_iterations, max_time_seconds, target_schema, max_pages)` | Autonomous multi-step goal execution |
+| `scrape(goal, target_schema, validators, max_pages)` | Schema-validated structured web scraping |
 | `execute_task(task)` | Single task with ReAct reasoning |
 | `search(query, search_type, max_results, ranking, return_metadata)` | Web search |
 | `batch_execute(tasks, parallel, stop_on_failure)` | Run multiple tasks |

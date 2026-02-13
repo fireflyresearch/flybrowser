@@ -26,8 +26,13 @@ FlyBrowser(
     log_verbosity: str = "normal",
     agent_config: AgentConfig | None = None,
     config_file: str | None = None,
+    search_provider: str | None = None,
+    search_api_key: str | None = None,
     stealth_config: StealthConfig | None = None,
     observability_config: ObservabilityConfig | None = None,
+    max_retries: int = 3,
+    retry_base_delay: float = 2.0,
+    rate_limit_max_delay: float = 60.0,
 )
 ```
 
@@ -51,8 +56,13 @@ FlyBrowser(
 | `log_verbosity` | `str` | `"normal"` | silent, minimal, normal, verbose, debug |
 | `agent_config` | `AgentConfig \| None` | `None` | Custom agent configuration |
 | `config_file` | `str \| None` | `None` | Path to YAML/JSON config file |
+| `search_provider` | `str \| None` | `None` | Search provider for web search: serper, google, bing |
+| `search_api_key` | `str \| None` | `None` | API key for search provider |
 | `stealth_config` | `StealthConfig \| None` | `None` | Stealth configuration for fingerprint, CAPTCHA, proxy |
 | `observability_config` | `ObservabilityConfig \| None` | `None` | Observability for logging, capture, live view |
+| `max_retries` | `int` | `3` | Maximum retry attempts for rate-limited (429) requests |
+| `retry_base_delay` | `float` | `2.0` | Base delay in seconds for exponential backoff |
+| `rate_limit_max_delay` | `float` | `60.0` | Maximum delay between rate limit retries |
 
 #### Example
 
@@ -195,7 +205,8 @@ async def act(
     instruction: str,
     use_vision: bool = True,
     context: ActionContext | dict | None = None,
-    return_metadata: bool = True
+    return_metadata: bool = True,
+    max_iterations: int = 10
 ) -> AgentRequestResponse | dict
 ```
 
@@ -207,6 +218,7 @@ Execute a browser action using natural language.
 | `use_vision` | `bool` | `True` | Use visual context |
 | `context` | `ActionContext \| dict \| None` | `None` | Structured context (form data, files, etc.) |
 | `return_metadata` | `bool` | `True` | Return full response object |
+| `max_iterations` | `int` | `10` | Maximum iterations for action execution |
 
 ```python
 # Click
@@ -244,7 +256,8 @@ async def extract(
     use_vision: bool = False,
     schema: dict | None = None,
     context: ActionContext | dict | None = None,
-    return_metadata: bool = True
+    return_metadata: bool = True,
+    max_iterations: int = 15
 ) -> AgentRequestResponse | dict
 ```
 
@@ -257,6 +270,7 @@ Extract data from the page.
 | `schema` | `dict \| None` | `None` | JSON Schema for structured data |
 | `context` | `ActionContext \| dict \| None` | `None` | Structured context (filters, preferences) |
 | `return_metadata` | `bool` | `True` | Return full response object |
+| `max_iterations` | `int` | `15` | Maximum iterations for extraction |
 
 ```python
 # Simple extraction
@@ -305,7 +319,8 @@ async def observe(
     query: str,
     return_selectors: bool = True,
     context: ActionContext | dict | None = None,
-    return_metadata: bool = True
+    return_metadata: bool = True,
+    max_iterations: int = 10
 ) -> AgentRequestResponse | list
 ```
 
@@ -317,6 +332,7 @@ Find elements on the page.
 | `return_selectors` | `bool` | `True` | Include CSS selectors |
 | `context` | `ActionContext \| dict \| None` | `None` | Structured context (filters, preferences) |
 | `return_metadata` | `bool` | `True` | Return full response object |
+| `max_iterations` | `int` | `10` | Maximum iterations for observation |
 
 ```python
 result = await browser.observe("find all buttons")
@@ -401,6 +417,134 @@ context = ContextBuilder()\
 result = await browser.agent(
     "Search for Python web frameworks and extract the top repositories",
     context=context
+)
+```
+
+### auto()
+
+```python
+async def auto(
+    goal: str,
+    context: ActionContext | dict | None = None,
+    max_iterations: int | None = None,
+    max_time_seconds: float | None = None,
+    target_schema: dict | None = None,
+    max_pages: int | None = None,
+    return_metadata: bool = True
+) -> AgentRequestResponse | dict
+```
+
+Run an autonomous multi-step goal execution. Decomposes a high-level goal into
+sub-goals, then plans and executes each sub-goal autonomously. Supports optional
+structured output via `target_schema` for data extraction use cases.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `goal` | `str` | Required | High-level goal to accomplish |
+| `context` | `ActionContext \| dict \| None` | `None` | Optional context (form data, preferences, constraints) |
+| `max_iterations` | `int \| None` | `None` | Maximum action iterations (defaults to 50 internally) |
+| `max_time_seconds` | `float \| None` | `None` | Maximum execution time in seconds (defaults to 1800.0 internally) |
+| `target_schema` | `dict \| None` | `None` | JSON schema for structured output |
+| `max_pages` | `int \| None` | `None` | Maximum pages to navigate or scrape |
+| `return_metadata` | `bool` | `True` | Return full response object |
+
+**Returns:** `AgentRequestResponse` (when `return_metadata=True`) or `dict` with execution result including `success`, `result_data`, and iteration details.
+
+```python
+# Simple autonomous task
+result = await browser.auto("Fill out the contact form",
+    context={"name": "Jane Doe", "email": "jane@example.com"},
+)
+print(result.data)
+
+# With structured output schema
+result = await browser.auto(
+    "Find the top 5 trending repositories on GitHub",
+    target_schema={
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "stars": {"type": "integer"},
+                "language": {"type": "string"},
+            },
+        },
+    },
+    max_pages=3,
+    max_iterations=30,
+)
+
+# With time limit
+result = await browser.auto(
+    "Compare prices for flights to Tokyo across multiple sites",
+    max_time_seconds=300.0,
+    max_pages=5,
+)
+```
+
+### scrape()
+
+```python
+async def scrape(
+    goal: str,
+    target_schema: dict,
+    validators: list[str] | None = None,
+    max_pages: int | None = None,
+    return_metadata: bool = True
+) -> AgentRequestResponse | dict
+```
+
+Scrape structured data from one or more pages. Navigates pages, extracts data
+matching the target schema, and optionally validates results against provided
+validators. Use this when you need schema-validated structured web scraping.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `goal` | `str` | Required | Description of what to scrape |
+| `target_schema` | `dict` | Required | JSON schema defining the expected output structure |
+| `validators` | `list[str] \| None` | `None` | Validation rules to apply to scraped data |
+| `max_pages` | `int \| None` | `None` | Maximum number of pages to scrape |
+| `return_metadata` | `bool` | `True` | Return full response object |
+
+**Returns:** `AgentRequestResponse` (when `return_metadata=True`) or `dict` with `result_data`, `pages_scraped`, and `validation_results`.
+
+```python
+# Scrape products with schema validation
+result = await browser.scrape(
+    "Extract all products from this page",
+    target_schema={
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "price": {"type": "number"},
+            },
+        },
+    },
+    max_pages=5,
+)
+print(result.data)  # List of product dicts
+
+# With validation rules
+result = await browser.scrape(
+    "Extract job listings",
+    target_schema={
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "company": {"type": "string"},
+                "salary": {"type": "string"},
+                "location": {"type": "string"},
+            },
+            "required": ["title", "company"],
+        },
+    },
+    validators=["no_empty_fields", "unique_entries"],
+    max_pages=3,
 )
 ```
 

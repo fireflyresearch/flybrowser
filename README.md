@@ -194,6 +194,8 @@ The `FlyBrowser` class is an async context manager. Every method below works ide
 | Method | Description |
 |--------|-------------|
 | `agent(task, context=None, max_iterations=50, max_time_seconds=1800.0, return_metadata=True)` | Execute complex multi-step goals autonomously |
+| `auto(goal, context, max_iterations, max_time_seconds, target_schema, max_pages)` | Autonomous multi-step goal execution |
+| `scrape(goal, target_schema, validators, max_pages)` | Schema-validated structured web scraping |
 | `execute_task(task)` | Execute a single task with full ReAct reasoning |
 
 ### Batch & Pipeline

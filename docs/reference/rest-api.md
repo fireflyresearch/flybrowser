@@ -391,8 +391,10 @@ Extract data from the current page using a natural language query.
 |-------|------|----------|---------|-------------|
 | `query` | string | **Yes** | -- | Natural language extraction query |
 | `use_vision` | boolean | No | `false` | Use vision-based extraction |
-| `schema` | object | No | `null` | JSON Schema for structured output |
+| `schema` | object | No | `null` | JSON Schema for structured output (alias for `output_schema`) |
 | `context` | object | No | `{}` | Additional context (filters, preferences, constraints) |
+
+> **Note:** The `schema` field is an alias for `output_schema`. Both names are accepted in request bodies.
 
 **Response model:** `ExtractResponse`
 
@@ -677,6 +679,167 @@ curl -X POST http://localhost:8000/sessions/abc123/observe \
   ],
   "page_url": "https://example.com",
   "error": null
+}
+```
+
+---
+
+#### `POST /sessions/{session_id}/auto`
+
+Execute a complex goal autonomously with sub-goal decomposition. Suitable for complex, multi-step browser tasks where the agent plans and executes sub-goals autonomously.
+
+**Request model:** `AutoRequest`
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| `goal` | string | **Yes** | -- | -- | High-level goal to accomplish |
+| `context` | object | No | `{}` | -- | User-provided context (form data, preferences, constraints) |
+| `max_iterations` | int | No | `null` | 1--500 | Maximum action iterations |
+| `max_time_seconds` | float | No | `null` | 10.0--7200.0 | Maximum execution time in seconds |
+| `target_schema` | object | No | `null` | -- | JSON schema for structured output |
+| `max_pages` | int | No | `null` | 1--1000 | Maximum pages to navigate/scrape |
+
+**Response model:** `AutoResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | Whether the goal was achieved |
+| `goal` | string | The original goal |
+| `result_data` | any | Produced data or confirmation |
+| `sub_goals_completed` | int | Number of sub-goals completed |
+| `total_sub_goals` | int | Total sub-goals planned |
+| `iterations` | int | Total iterations executed |
+| `duration_seconds` | float | Total execution time in seconds |
+| `pages_scraped` | int | Number of pages visited |
+| `items_extracted` | int | Number of items extracted |
+| `final_url` | string | Final URL after execution |
+| `actions_taken` | array | Summary of actions taken |
+| `suggestions` | array | Follow-up suggestions |
+| `error_message` | string | Error message if failed |
+
+```bash
+curl -X POST http://localhost:8000/sessions/abc123/auto \
+  -H "Content-Type: application/json" \
+  -d '{
+    "goal": "Find all product listings and extract names, prices, and ratings",
+    "context": {
+      "preferences": {"category": "electronics"}
+    },
+    "max_iterations": 100,
+    "max_time_seconds": 600,
+    "target_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "price": {"type": "string"},
+          "rating": {"type": "number"}
+        }
+      }
+    },
+    "max_pages": 5
+  }'
+```
+
+```json
+{
+  "success": true,
+  "goal": "Find all product listings and extract names, prices, and ratings",
+  "result_data": [
+    {"name": "Wireless Headphones", "price": "$59.99", "rating": 4.5},
+    {"name": "USB-C Hub", "price": "$34.99", "rating": 4.2}
+  ],
+  "sub_goals_completed": 3,
+  "total_sub_goals": 3,
+  "iterations": 12,
+  "duration_seconds": 25.3,
+  "pages_scraped": 3,
+  "items_extracted": 2,
+  "final_url": "https://shop.example.com/electronics?page=3",
+  "actions_taken": [
+    "Navigated to product listing page",
+    "Applied category filter for electronics",
+    "Extracted product data across 3 pages"
+  ],
+  "suggestions": [
+    "Try increasing max_pages to capture more results",
+    "Add a sort preference to context for consistent ordering"
+  ],
+  "error_message": null
+}
+```
+
+---
+
+#### `POST /sessions/{session_id}/scrape`
+
+Scrape structured data from one or more pages with schema validation and pagination. Navigates pages, extracts data matching the target schema, and validates results against provided validators.
+
+**Request model:** `ScrapeRequest`
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| `goal` | string | **Yes** | -- | -- | Description of what to scrape |
+| `target_schema` | object | **Yes** | -- | -- | JSON schema defining the expected output structure |
+| `validators` | array | No | `null` | -- | Validation rules to apply to results |
+| `max_pages` | int | No | `null` | 1--1000 | Maximum number of pages to scrape |
+
+**Response model:** `ScrapeResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | Whether scraping succeeded |
+| `goal` | string | The original scraping goal |
+| `result_data` | any | Scraped data matching the target schema |
+| `pages_scraped` | int | Number of pages scraped |
+| `items_extracted` | int | Number of items extracted |
+| `validation_results` | array | Results of each validator |
+| `schema_compliance` | float | Fraction of items matching the schema (0.0--1.0) |
+| `duration_seconds` | float | Total execution time in seconds |
+| `final_url` | string | Final URL after scraping |
+| `error_message` | string | Error message if failed |
+
+```bash
+curl -X POST http://localhost:8000/sessions/abc123/scrape \
+  -H "Content-Type: application/json" \
+  -d '{
+    "goal": "Scrape all blog post titles, authors, and dates",
+    "target_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "author": {"type": "string"},
+          "date": {"type": "string", "format": "date"}
+        },
+        "required": ["title", "author", "date"]
+      }
+    },
+    "validators": ["no_empty_fields", "date_format"],
+    "max_pages": 10
+  }'
+```
+
+```json
+{
+  "success": true,
+  "goal": "Scrape all blog post titles, authors, and dates",
+  "result_data": [
+    {"title": "Getting Started with FlyBrowser", "author": "Jane Doe", "date": "2026-02-10"},
+    {"title": "Advanced Scraping Techniques", "author": "John Smith", "date": "2026-02-08"}
+  ],
+  "pages_scraped": 3,
+  "items_extracted": 2,
+  "validation_results": [
+    {"validator": "no_empty_fields", "passed": true, "details": "All fields populated"},
+    {"validator": "date_format", "passed": true, "details": "All dates match ISO 8601"}
+  ],
+  "schema_compliance": 1.0,
+  "duration_seconds": 18.7,
+  "final_url": "https://blog.example.com/page/3",
+  "error_message": null
 }
 ```
 
@@ -1195,6 +1358,8 @@ curl http://localhost:8000/flybrowser/blank
 | `POST` | `/sessions/{session_id}/act` | `ActionRequest` | `ActionResponse` | Automation |
 | `POST` | `/sessions/{session_id}/agent` | `AgentRequest` | `AgentResponse` | Automation |
 | `POST` | `/sessions/{session_id}/observe` | `ObserveRequest` | `ObserveResponse` | Automation |
+| `POST` | `/sessions/{session_id}/auto` | `AutoRequest` | `AutoResponse` | Automation |
+| `POST` | `/sessions/{session_id}/scrape` | `ScrapeRequest` | `ScrapeResponse` | Automation |
 | `POST` | `/sessions/{session_id}/workflow` | `WorkflowRequest` | `WorkflowResponse` | Automation |
 | `POST` | `/sessions/{session_id}/monitor` | `MonitorRequest` | `MonitorResponse` | Automation |
 | `POST` | `/sessions/{session_id}/screenshot` | `ScreenshotRequest` | `ScreenshotResponse` | Screenshots |
