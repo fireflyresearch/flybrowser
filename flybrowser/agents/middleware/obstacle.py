@@ -47,5 +47,5 @@ class ObstacleDetectionMiddleware:
         except Exception as e:
             logger.debug(f"Obstacle detection failed: {e}")
 
-    async def after_run(self, ctx: Any, result: Any) -> None:
-        pass
+    async def after_run(self, ctx: Any, result: Any) -> Any:
+        return result

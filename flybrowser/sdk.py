@@ -1947,16 +1947,29 @@ class FlyBrowser:
                 "note": "Usage tracking not available in server mode",
             }
         
-        # Embedded mode: usage tracking not available via new BrowserAgent yet
-        return {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "cost_usd": 0.0,
-            "calls_count": 0,
-            "cached_calls": 0,
-            "model": "",
-        }
+        # Embedded mode: delegate to fireflyframework-genai usage tracker
+        try:
+            from fireflyframework_genai.observability.usage import default_usage_tracker
+            summary = default_usage_tracker.get_summary_for_agent("flybrowser")
+            return {
+                "prompt_tokens": summary.total_input_tokens,
+                "completion_tokens": summary.total_output_tokens,
+                "total_tokens": summary.total_tokens,
+                "cost_usd": summary.total_cost_usd,
+                "calls_count": summary.total_requests,
+                "cached_calls": 0,
+                "model": self._llm_model or "",
+            }
+        except Exception:
+            return {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+                "calls_count": 0,
+                "cached_calls": 0,
+                "model": self._llm_model or "",
+            }
 
     # Embedded streaming implementation methods
     async def _start_embedded_stream(

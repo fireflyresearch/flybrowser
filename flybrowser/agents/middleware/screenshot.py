@@ -27,7 +27,7 @@ class ScreenshotOnErrorMiddleware:
     async def before_run(self, ctx: Any) -> None:
         pass
 
-    async def after_run(self, ctx: Any, result: Any) -> None:
+    async def after_run(self, ctx: Any, result: Any) -> Any:
         if getattr(result, "error", None):
             try:
                 img_bytes = await self._page.screenshot()
@@ -35,3 +35,4 @@ class ScreenshotOnErrorMiddleware:
                 ctx.metadata["error_screenshot_b64"] = b64[:100]
             except Exception as e:
                 logger.debug(f"Error screenshot failed: {e}")
+        return result

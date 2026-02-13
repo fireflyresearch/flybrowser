@@ -179,4 +179,34 @@ class BrowserAgent:
     def _format_result(self, result: Any, task: str) -> dict:
         if isinstance(result, dict):
             return result
-        return {"success": True, "result": str(result) if result else "", "task": task}
+        # Extract text output from pydantic-ai RunResult / ReasoningResult objects
+        text = self._extract_output(result)
+        success = getattr(result, "success", True)
+        usage = self._extract_usage(result)
+        return {"success": success, "result": text, "task": task, **usage}
+
+    @staticmethod
+    def _extract_output(result: Any) -> str:
+        """Extract the text output from a pydantic-ai RunResult or similar."""
+        if result is None:
+            return ""
+        # pydantic-ai >=2.x uses .output, older uses .data
+        for attr in ("output", "data"):
+            val = getattr(result, attr, None)
+            if val is not None:
+                return str(val)
+        return str(result)
+
+    @staticmethod
+    def _extract_usage(result: Any) -> dict:
+        """Extract usage/cost metadata from a pydantic-ai RunResult."""
+        usage_obj = getattr(result, "usage", None) or getattr(result, "_usage", None)
+        if usage_obj is None:
+            return {}
+        return {
+            "llm_usage": {
+                "prompt_tokens": getattr(usage_obj, "request_tokens", 0) or getattr(usage_obj, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(usage_obj, "response_tokens", 0) or getattr(usage_obj, "completion_tokens", 0) or 0,
+                "total_tokens": getattr(usage_obj, "total_tokens", 0) or 0,
+            }
+        }
