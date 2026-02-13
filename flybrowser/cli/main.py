@@ -309,6 +309,11 @@ def create_parser() -> argparse.ArgumentParser:
 Commands:
   (none)      Launch interactive REPL (default)
   repl        Launch interactive REPL
+  goto        Navigate to a URL
+  extract     Extract data from a page
+  act         Perform an action on the page
+  screenshot  Take a screenshot
+  agent       Run an autonomous agent task
   session     Manage browser sessions
   setup       Installation and configuration wizard
   serve       Start the FlyBrowser API service
@@ -319,6 +324,11 @@ Commands:
 
 Examples:
   flybrowser                          # Start REPL
+  flybrowser goto https://example.com # Navigate to URL
+  flybrowser extract "Get the title"  # Extract data
+  flybrowser act "Click login"        # Perform action
+  flybrowser screenshot --output s.png # Take screenshot
+  flybrowser agent "Find flights"     # Run agent task
   flybrowser session create           # Create a session
   flybrowser session list             # List sessions
   flybrowser setup configure          # Interactive setup
@@ -521,6 +531,10 @@ Documentation: https://flybrowser.dev/docs
     # session commands
     from flybrowser.cli.session import add_session_subparser
     add_session_subparser(subparsers)
+
+    # direct SDK-like commands (goto, extract, act, screenshot, agent)
+    from flybrowser.cli.direct import add_direct_subparsers
+    add_direct_subparsers(subparsers)
 
     return parser
 
