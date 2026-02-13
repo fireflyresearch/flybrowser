@@ -362,48 +362,84 @@ class VisualComparisonTool(BaseTool):
         ...
 ```
 
-## Registering Custom Tools
+## Using Custom Tools with ToolKits
 
-### During Browser Initialization
+FlyBrowser's agent uses **fireflyframework-genai ToolKits** to organize tools. To add custom tools, you create a ToolKit using the `@firefly_tool` decorator and pass it alongside the built-in toolkits.
+
+### Creating a Custom ToolKit
+
+The recommended approach is to use the `@firefly_tool` decorator from fireflyframework-genai:
 
 ```python
-from flybrowser import FlyBrowser
+from fireflyframework_genai.tools.decorators import firefly_tool
+from fireflyframework_genai.tools.toolkit import ToolKit
 
-async def main():
-    async with FlyBrowser(...) as browser:
-        # Register tool class
-        browser.react_agent.tool_registry.register(MyCustomTool)
-        
-        # Register tool instance
-        tool_instance = MyCustomTool()
-        browser.react_agent.tool_registry.register_instance(tool_instance)
-        
-        # Now the agent can use the custom tool
-        await browser.agent("Use my_custom_tool to process data")
+
+def create_custom_toolkit() -> ToolKit:
+    """Create a toolkit with custom tools."""
+
+    @firefly_tool(
+        name="my_custom_tool",
+        description="Description of what the tool does",
+        auto_register=False,
+    )
+    async def my_custom_tool(param1: str) -> str:
+        """Execute the custom tool logic."""
+        return f"Processed: {param1}"
+
+    @firefly_tool(
+        name="another_tool",
+        description="Another custom tool",
+        auto_register=False,
+    )
+    async def another_tool(query: str, limit: int = 10) -> str:
+        """Execute another tool."""
+        return f"Results for '{query}' (limit={limit})"
+
+    return ToolKit.from_tools(
+        [my_custom_tool, another_tool],
+        name="custom",
+        description="Custom tools for domain-specific tasks",
+    )
+```
+
+### Adding ToolKits to BrowserAgent
+
+Custom toolkits are passed to `BrowserAgent` during construction alongside the built-in toolkits:
+
+```python
+from flybrowser.agents.browser_agent import BrowserAgent, BrowserAgentConfig
+from flybrowser.agents.toolkits import create_all_toolkits
+
+# Create the standard toolkits
+standard_toolkits = create_all_toolkits(page=page_controller)
+
+# Create your custom toolkit
+custom_toolkit = create_custom_toolkit()
+
+# Combine them
+all_toolkits = standard_toolkits + [custom_toolkit]
 ```
 
 ### Creating a Tool Package
 
 ```python
 # my_tools/__init__.py
-from .highlight import HighlightElementTool
-from .weather import WeatherTool
+from fireflyframework_genai.tools.decorators import firefly_tool
+from fireflyframework_genai.tools.toolkit import ToolKit
 
-ALL_TOOLS = [HighlightElementTool, WeatherTool]
 
-def register_all(registry):
-    """Register all custom tools."""
-    for tool_class in ALL_TOOLS:
-        registry.register(tool_class)
-```
+def create_weather_toolkit() -> ToolKit:
+    """Weather tools."""
 
-```python
-# Usage
-from flybrowser import FlyBrowser
-from my_tools import register_all
+    @firefly_tool(name="get_weather", description="Get weather for a city", auto_register=False)
+    async def get_weather(city: str) -> str:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("https://api.weather.example/v1/current", params={"city": city})
+            return resp.text
 
-async with FlyBrowser(...) as browser:
-    register_all(browser.react_agent.tool_registry)
+    return ToolKit.from_tools([get_weather], name="weather", description="Weather tools")
 ```
 
 ## Tool Execution Context
@@ -486,19 +522,16 @@ async def test_my_custom_tool():
 
 ```python
 import pytest
-from flybrowser import FlyBrowser
-from my_tools import MyCustomTool
+from fireflyframework_genai.tools.toolkit import ToolKit
 
 @pytest.mark.asyncio
-async def test_tool_with_agent():
-    async with FlyBrowser(headless=True) as browser:
-        browser.react_agent.tool_registry.register(MyCustomTool)
-        
-        result = await browser.agent(
-            "Use my_custom_tool with param1='test'"
-        )
-        
-        assert result.success
+async def test_custom_toolkit():
+    toolkit = create_custom_toolkit()
+
+    # Verify toolkit has expected tools
+    tool_names = [t.name for t in toolkit.tools]
+    assert "my_custom_tool" in tool_names
+    assert "another_tool" in tool_names
 ```
 
 ## Best Practices

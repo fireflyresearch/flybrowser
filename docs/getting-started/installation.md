@@ -6,7 +6,7 @@ This guide covers installing FlyBrowser and its dependencies on your system.
 
 FlyBrowser requires:
 
-- **Python 3.9 or later** - Python 3.10, 3.11, and 3.12 are fully supported
+- **Python 3.13 or later**
 - **Operating System** - macOS, Linux, or Windows
 - **Memory** - At least 4GB RAM recommended (browsers consume significant memory)
 - **Disk Space** - Approximately 500MB for the package and browser binaries

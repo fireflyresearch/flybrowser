@@ -188,7 +188,7 @@ import logging
 
 # Enable obstacle detector logging
 logging.getLogger("flybrowser.agents.obstacle_detector").setLevel(logging.DEBUG)
-logging.getLogger("flybrowser.agents.react_agent").setLevel(logging.DEBUG)
+logging.getLogger("flybrowser.agents.middleware.obstacle").setLevel(logging.DEBUG)
 ```
 
 ### Log Message Reference

@@ -39,9 +39,9 @@ User Code
 ## Context Types
 
 ### FORM_DATA
-**Purpose**: Automated form filling  
-**Schema**: `{field_selector: value}`  
-**Tools**: TypeTool  
+**Purpose**: Automated form filling
+**Schema**: `{field_selector: value}`
+**Tools**: type_text (InteractionToolkit)
 **Example**:
 ```python
 context = ContextBuilder()\
@@ -55,9 +55,9 @@ await browser.act("Fill and submit login form", context=context)
 ```
 
 ### FILES
-**Purpose**: File uploads with metadata  
-**Schema**: `[{field, path, mime_type?, name?}]`  
-**Tools**: UploadFileTool  
+**Purpose**: File uploads with metadata
+**Schema**: `[{field, path, mime_type?, name?}]`
+**Tools**: upload_file (InteractionToolkit)
 **Example**:
 ```python
 context = ContextBuilder()\
@@ -68,9 +68,9 @@ await browser.act("Upload application documents", context=context)
 ```
 
 ### FILTERS
-**Purpose**: Data filtering criteria  
-**Schema**: `{filter_name: filter_value}`  
-**Tools**: ExtractTextTool, SearchAPITool  
+**Purpose**: Data filtering criteria
+**Schema**: `{filter_name: filter_value}`
+**Tools**: extract_text (ExtractionToolkit), search (SearchToolkit)
 **Example**:
 ```python
 context = ContextBuilder()\
@@ -85,9 +85,9 @@ result = await browser.extract("Get product listings", context=context)
 ```
 
 ### PREFERENCES
-**Purpose**: User preferences for behavior  
-**Schema**: `{pref_name: pref_value}`  
-**Tools**: ExtractTextTool, SearchAPITool  
+**Purpose**: User preferences for behavior
+**Schema**: `{pref_name: pref_value}`
+**Tools**: extract_text (ExtractionToolkit), search (SearchToolkit)
 **Example**:
 ```python
 context = ContextBuilder()\
@@ -101,9 +101,9 @@ context = ContextBuilder()\
 ```
 
 ### CONDITIONS
-**Purpose**: Conditional navigation/actions  
-**Schema**: `{condition_name: expected_value}`  
-**Tools**: NavigateTool (future enhancement)  
+**Purpose**: Conditional navigation/actions
+**Schema**: `{condition_name: expected_value}`
+**Tools**: navigate (NavigationToolkit, future enhancement)
 **Example**:
 ```python
 context = ContextBuilder()\
@@ -146,11 +146,11 @@ context = ContextBuilder()\
 
 | Tool | form_data | files | filters | preferences | conditions | constraints | metadata |
 |------|-----------|-------|---------|-------------|------------|-------------|----------|
-| TypeTool | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| UploadFileTool | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| ExtractTextTool | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| SearchAPITool | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| NavigateTool | ❌ | ❌ | ❌ | ❌ | 🔄 | ❌ | ❌ |
+| type_text | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| upload_file | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| extract_text | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| search | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| navigate | ❌ | ❌ | ❌ | ❌ | 🔄 | ❌ | ❌ |
 
 ✅ = Supported | ❌ = Not applicable | 🔄 = Planned
 

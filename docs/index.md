@@ -183,7 +183,7 @@ asyncio.run(main())
 
 ## Version
 
-This documentation covers FlyBrowser version 1.26.1.
+This documentation covers FlyBrowser version 26.02.01 (CalVer). Requires Python 3.13+.
 
 ## License
 

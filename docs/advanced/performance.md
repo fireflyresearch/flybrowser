@@ -112,75 +112,16 @@ await browser.extract(
 
 ### Token Budget Awareness
 
-FlyBrowser automatically manages token budgets to prevent context overflow:
+FlyBrowser uses `BrowserMemoryManager` to keep context within LLM limits. The memory system automatically formats page history, navigation graph, and obstacle cache into a prompt-friendly representation.
+
+For large content, use more specific extraction instructions:
 
 ```python
-from flybrowser.llm.token_budget import TokenEstimator, TokenBudgetManager
+# Instead of extracting entire page
+await browser.extract("Get all text")  # May overflow
 
-# Check if content will fit before processing
-estimate = TokenEstimator.estimate(large_content)
-print(f"Content requires ~{estimate.tokens} tokens")
-
-# Budget manager tracks usage
-manager = TokenBudgetManager(
-    context_window=128000,
-    max_output_tokens=8192,
-    safety_margin=0.1  # 10% buffer
-)
-
-# Check available space
-available = manager.available_for_input
-print(f"Available: {available} tokens")
-
-# For very large content, use ConversationManager
-from flybrowser.llm.conversation import ConversationManager
-
-conv = ConversationManager(llm_provider)
-result = await conv.send_with_large_content(
-    large_html,
-    instruction="Extract all products",
-    schema=product_schema
-)
-# Automatically chunks and processes
-```
-
-### Content-Specific Token Estimation
-
-Token estimation varies by content type:
-
-| Content Type | Chars/Token | Notes |
-|-------------|-------------|-------|
-| Plain text | ~4 | Standard English |
-| Code | ~3.5 | More symbols |
-| JSON | ~3 | Structural overhead |
-| HTML | ~2.5 | Tag overhead |
-
-```python
-from flybrowser.llm.token_budget import TokenEstimator, ContentType
-
-# Auto-detect content type
-estimate = TokenEstimator.estimate(content)
-
-# Force specific type for accuracy
-estimate = TokenEstimator.estimate(content, ContentType.HTML)
-```
-
-### Caching
-
-Enable LLM response caching:
-
-```python
-from flybrowser.llm.config import LLMProviderConfig, CacheConfig
-
-config = LLMProviderConfig(
-    provider_type="openai",
-    model="gpt-4o",
-    cache_config=CacheConfig(
-        enabled=True,
-        ttl_seconds=3600,  # 1 hour
-        max_size=1000,
-    ),
-)
+# Extract specific sections
+await browser.extract("Get only the main article content")
 ```
 
 ### Vision Optimization

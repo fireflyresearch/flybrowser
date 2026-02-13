@@ -125,29 +125,12 @@ curl https://api.openai.com/v1/models \
 
 **Solutions:**
 
-1. Add retry logic:
+1. The framework (fireflyframework-genai) handles retries automatically. Wait and retry your request.
+
+2. Reduce request frequency by adding delays between operations:
 ```python
-from flybrowser.llm.config import RetryConfig
-
-config = LLMProviderConfig(
-    retry_config=RetryConfig(
-        max_retries=5,
-        initial_delay=2.0,
-        max_delay=60.0,
-    ),
-)
-```
-
-2. Use rate limiting:
-```python
-from flybrowser.llm.config import RateLimitConfig
-
-config = LLMProviderConfig(
-    rate_limit_config=RateLimitConfig(
-        requests_per_minute=30,
-        tokens_per_minute=100000,
-    ),
-)
+import asyncio
+await asyncio.sleep(2)  # Wait between operations
 ```
 
 3. Switch to a different model or provider:
@@ -206,34 +189,7 @@ logging.basicConfig(level=logging.DEBUG)
 # - Prunes older history when context is full
 ```
 
-2. Check content size before extraction:
-```python
-from flybrowser.llm.token_budget import TokenEstimator
-
-# Estimate tokens for large content
-large_content = await page.inner_text("body")
-estimate = TokenEstimator.estimate(large_content)
-print(f"Content: ~{estimate.tokens} tokens ({estimate.content_type.value})")
-
-if estimate.tokens > 50000:
-    # Use more targeted extraction
-    data = await browser.extract("Get only the product names and prices")
-```
-
-3. Use ConversationManager for very large content:
-```python
-from flybrowser.llm.conversation import ConversationManager
-
-manager = ConversationManager(llm_provider)
-result = await manager.send_with_large_content(
-    very_large_html,
-    instruction="Extract all articles",
-    schema={"type": "object", "properties": {...}}
-)
-# Automatically chunks and processes in multiple turns
-```
-
-4. Use more specific extraction instructions:
+2. Use more specific extraction instructions:
 ```python
 # Instead of extracting entire page
 await browser.extract("Get all text")  # May overflow
@@ -242,12 +198,7 @@ await browser.extract("Get all text")  # May overflow
 await browser.extract("Get only the main article content")
 ```
 
-5. Check model context window:
-```python
-info = llm_provider.get_model_info()
-print(f"Context window: {info.context_window} tokens")
-print(f"Max output: {info.max_output_tokens} tokens")
-```
+3. Check model context window by consulting your LLM provider's documentation for the model you are using.
 
 ## Agent Issues
 
@@ -561,7 +512,7 @@ Check why screenshots are or aren't being captured:
 
 ```python
 import logging
-logging.getLogger("flybrowser.agents.react_agent").setLevel(logging.DEBUG)
+logging.getLogger("flybrowser.agents.middleware.screenshot").setLevel(logging.DEBUG)
 
 # Look for these log messages:
 # [VISION] Skipped: page is blank (about:blank)  - Expected on first iteration

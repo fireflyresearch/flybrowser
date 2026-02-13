@@ -8,7 +8,7 @@ Before starting, ensure you have:
 
 1. FlyBrowser installed (see [Installation](installation.md))
 2. An API key from an LLM provider (OpenAI, Anthropic, or Google)
-3. Python 3.9 or later
+3. Python 3.13 or later
 
 ## Your First Script
 

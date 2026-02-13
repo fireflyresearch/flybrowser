@@ -10,7 +10,7 @@ _/ ____\  | ___.__.\_ |_________  ______  _  ________ ___________
 ```
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 **LLM-powered browser automation that speaks your language.**
@@ -494,87 +494,46 @@ Pipeline: Capture Page D while analyzing Page C
 ```
 FlyBrowser SDK (sdk.py)
     ↓
-ReActBrowserAgent (sdk_integration.py)
-    ↓ initialize()
-    ├── ToolRegistry (30+ tools)
-    │   ├── Navigation: NavigateTool, GoBackTool, GoForwardTool, RefreshTool
-    │   ├── Interaction: ClickTool, TypeTool, ScrollTool, HoverTool, PressKeyTool, SelectOptionTool, etc.
-    │   ├── Extraction: ExtractTextTool, ScreenshotTool, GetPageStateTool
-    │   ├── Exploration: PageExplorerTool
-    │   ├── Search: SearchAgentTool (primary), SearchHumanTool (fallback), SearchRankTool
-    │   └── System: CompleteTool, FailTool, WaitTool, AskUserTool
-    ├── ReActAgent (react_agent.py)
-    │   ├── TaskPlanner - Complex task planning
-    │   ├── GoalInterpreter - Fast-path URL navigation
-    │   ├── AgentMemory - 4-tier memory system
-    │   ├── PromptManager - Template-based prompts
-    │   └── ReActParser - Parse LLM responses (structured output)
-    ├── ParallelPageExplorer (parallel_explorer.py)
-    │   ├── ExplorationDAG - Page dependency tracking
-    │   ├── SitemapGraph - Site exploration state machine
-    │   └── Pipeline mode - Capture while analyzing (2-4x speedup)
-    └── Safety: Circuit breakers, loop detection, response repair
-
-Execution Flow:
-ReActAgent.execute(task, operation_mode)
-  → GoalInterpreter: Fast-path URL navigation (skip LLM for trivial goals)
-  → TaskPlanner: Create execution plan (if complex)
-  → LLM generates: Thought + Action (structured JSON output)
-  → Auto-repair: Fix malformed JSON responses
-  → ToolRegistry.execute_tool(action)
-  → Observation → Update Memory
-  → Loop until complete/fail
+BrowserAgent (browser_agent.py)
+    ├── FireflyAgent (fireflyframework-genai)
+    │   └── Pydantic AI Agent (handles LLM calls)
+    ├── 6 ToolKits (32 tools)
+    │   ├── NavigationToolkit: goto, back, forward, refresh
+    │   ├── InteractionToolkit: click, type, scroll, hover, select, ...
+    │   ├── ExtractionToolkit: extract_text, screenshot, get_page_state
+    │   ├── SearchToolkit: web search
+    │   ├── CaptchaToolkit: CAPTCHA solving
+    │   └── SystemToolkit: complete, fail, wait, ask_user
+    ├── ReActPattern (framework reasoning loop)
+    ├── BrowserMemoryManager (page history, navigation graph, obstacles)
+    └── Middleware
+        ├── ObstacleDetectionMiddleware
+        └── ScreenshotOnErrorMiddleware
 ```
 
 ### Key Components
 
-**ReActAgent** - Core reasoning loop
-- Manages thought-action-observation cycles
-- Integrates with LLM for reasoning
-- Maintains execution state and history
-- Supports multiple reasoning strategies (Standard, CoT, ToT)
+**BrowserAgent** - Main automation agent
+- Built on `FireflyAgent` from fireflyframework-genai
+- Uses `ReActPattern` for multi-step reasoning
+- Methods: `act()`, `extract()`, `observe()`, `run_task()`, `agent_stream()`
 
-**AgentOrchestrator** - Safety wrapper
-- Circuit breakers for infinite loops
-- Timeout management
-- Execution mode control (Autonomous, Supervised)
-- Progress tracking and reporting
+**6 ToolKits** - Browser tools organized by function
+- Built on `fireflyframework_genai.tools.toolkit.ToolKit`
+- Created via `create_all_toolkits()` and registered with `FireflyAgent`
 
-**ToolRegistry** - Tool management
-- Register and discover tools
-- Generate tool descriptions for LLM
-- Execute tool calls with validation
-- Support for tool dependencies
+**BrowserMemoryManager** - Browser-specific state tracking
+- Page snapshots, navigation graph, obstacle cache
+- Visited URL tracking, arbitrary facts
+- Formats state for LLM prompts
 
-**AgentMemory** - 4-tier memory system
-- **Episodic**: Recent actions and observations
-- **Semantic**: Long-term knowledge and patterns
-- **Procedural**: Learned skills and strategies
-- **Working**: Current task context
+**Middleware** - Cross-cutting concerns
+- `ObstacleDetectionMiddleware`: Automatic popup/modal dismissal
+- `ScreenshotOnErrorMiddleware`: Debug screenshots on tool failures
 
-### Tools (Not Agents)
-
-FlyBrowser uses **tools** (not separate agents) for browser operations:
-
-```python
-from flybrowser.agents.tools import (
-    # Navigation tools
-    NavigateTool, GoBackTool, GoForwardTool, RefreshTool,
-    # Interaction tools
-    ClickTool, TypeTool, ScrollTool, HoverTool, PressKeyTool,
-    SelectOptionTool, CheckboxTool, FocusTool, FillTool,
-    # Extraction tools
-    ExtractTextTool, ScreenshotTool, GetPageStateTool,
-    # Search tools
-    SearchAgentTool, SearchHumanTool, SearchRankTool,
-    # Exploration tools
-    PageExplorerTool,
-    # System tools
-    CompleteTool, FailTool, WaitTool, AskUserTool,
-    # Registry
-    ToolRegistry,
-)
-```
+**SSE Streaming** - Real-time agent events
+- `AgentStreamEvent` for typed events (thought, action, observation)
+- `format_sse_event()` for Server-Sent Events format
 
 ### Automatic Obstacle Handling
 
@@ -616,7 +575,7 @@ Phase 2: VLM Analysis + Dismissal (~2-5s)
 
 ### Reasoning Strategies
 
-ReActAgent supports multiple reasoning strategies:
+The BrowserAgent supports multiple reasoning strategies:
 
 **Standard ReAct**: Fast, single-path reasoning
 ```python
@@ -1236,41 +1195,6 @@ flybrowser> quit
 
 Works with any LLM:
 
-### Auto-Select Model (Recommended)
-
-Let FlyBrowser choose the best model based on your requirements:
-
-```python
-from flybrowser import FlyBrowser, ModelPreference
-
-# Auto-select best cheap model
-browser = FlyBrowser(
-    llm_provider="openai",
-    llm_preference=ModelPreference.BEST_QUALITY_CHEAP,
-    api_key="sk-..."
-)
-
-# Auto-select model with vision capabilities
-browser = FlyBrowser(
-    llm_provider="anthropic",
-    llm_preference=ModelPreference.VISION_OPTIMIZED,
-    api_key="sk-ant-..."
-)
-```
-
-**Available Preferences:**
-| Preference | Description |
-|------------|-------------|
-| `BEST_QUALITY` | Highest quality, regardless of cost |
-| `BEST_QUALITY_CHEAP` | Best quality among affordable models |
-| `CHEAPEST` | Lowest cost |
-| `BALANCED` | Good balance of quality and cost |
-| `VISION_OPTIMIZED` | Best model with vision support |
-| `FAST_RESPONSE` | Fastest response time |
-| `REASONING` | Complex reasoning tasks |
-| `CODING` | Code generation |
-| `LOCAL_ONLY` | Only local/free models |
-
 ### OpenAI
 ```python
 browser = FlyBrowser(
@@ -1339,13 +1263,12 @@ browser = FlyBrowser(
 ## Configuration
 
 ```python
-from flybrowser import FlyBrowser, ModelPreference
+from flybrowser import FlyBrowser
 
 # Via constructor
 browser = FlyBrowser(
     llm_provider="openai",
-    llm_model="gpt-5.2",                         # Explicit model OR...
-    llm_preference=ModelPreference.BALANCED,      # ...auto-select by preference
+    llm_model="gpt-4o",
     api_key="sk-...",
     headless=True,
     browser_type="chromium",
