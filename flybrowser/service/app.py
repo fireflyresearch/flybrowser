@@ -68,9 +68,9 @@ from contextlib import asynccontextmanager
 from typing import Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fireflyframework_genai.exposure.rest import create_genai_app
 
 from flybrowser import __version__
 from flybrowser.service.template_renderer import render_player_html, render_blank_html, get_static_dir
@@ -216,64 +216,77 @@ FlyBrowser provides a powerful API for browser automation with built-in support 
 - [Support](mailto:support@flybrowser.dev)
 """
 
-# Create FastAPI app
-app = FastAPI(
-    title="FlyBrowser API",
-    description=API_DESCRIPTION,
+# Create FastAPI app via fireflyframework-genai factory.
+# This provides /health, /health/ready, /health/live, /agents endpoints,
+# CORS middleware, and X-Request-ID middleware out of the box.
+app = create_genai_app(
+    title="FlyBrowser",
     version=__version__,
-    lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
-    contact={
-        "name": "FlyBrowser Support",
-        "url": "https://flybrowser.dev",
-        "email": "support@flybrowser.dev",
-    },
-    license_info={
-        "name": "Apache 2.0",
-        "url": "https://www.apache.org/licenses/LICENSE-2.0.html",
-    },
-    openapi_tags=[
-        {
-            "name": "Health",
-            "description": "Health check and service status endpoints",
-        },
-        {
-            "name": "Sessions",
-            "description": "Browser session management - create, list, and delete sessions",
-        },
-        {
-            "name": "Navigation",
-            "description": "Browser navigation and interaction - navigate, click, type, etc.",
-        },
-        {
-            "name": "Automation",
-            "description": "High-level automation endpoints - autonomous mode (`auto`) for complex goal execution and schema-validated web scraping (`scrape`) with pagination and validators",
-        },
-        {
-            "name": "Screenshots",
-            "description": "Screenshot capture with optional PII masking",
-        },
-        {
-            "name": "Recording",
-            "description": "Video recording of browser sessions",
-        },
-        {
-            "name": "Cluster",
-            "description": "Cluster management endpoints (coordinator mode only)",
-        },
-    ],
+    cors=True,
+    request_id=True,
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Remove the framework's generic /health route so that our richer
+# health_check handler (defined below) takes precedence.
+app.routes[:] = [r for r in app.routes if not (hasattr(r, "path") and r.path == "/health")]
+
+# Apply the FlyBrowser-specific lifespan that initialises session manager,
+# streaming, recording, etc.  The framework's own lifespan (plugin discovery,
+# warmup, OTel) is composed automatically.
+_framework_lifespan = app.router.lifespan_context
+
+
+@asynccontextmanager
+async def _composed_lifespan(app_: FastAPI):
+    """Run both the framework lifespan and the FlyBrowser lifespan."""
+    async with _framework_lifespan(app_):
+        async with lifespan(app_):
+            yield
+
+
+app.router.lifespan_context = _composed_lifespan
+
+# Carry over OpenAPI metadata from the original configuration.
+app.description = API_DESCRIPTION
+app.contact = {
+    "name": "FlyBrowser Support",
+    "url": "https://flybrowser.dev",
+    "email": "support@flybrowser.dev",
+}
+app.license_info = {
+    "name": "Apache 2.0",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0.html",
+}
+app.openapi_tags = [
+    {
+        "name": "Health",
+        "description": "Health check and service status endpoints",
+    },
+    {
+        "name": "Sessions",
+        "description": "Browser session management - create, list, and delete sessions",
+    },
+    {
+        "name": "Navigation",
+        "description": "Browser navigation and interaction - navigate, click, type, etc.",
+    },
+    {
+        "name": "Automation",
+        "description": "High-level automation endpoints - autonomous mode (`auto`) for complex goal execution and schema-validated web scraping (`scrape`) with pagination and validators",
+    },
+    {
+        "name": "Screenshots",
+        "description": "Screenshot capture with optional PII masking",
+    },
+    {
+        "name": "Recording",
+        "description": "Video recording of browser sessions",
+    },
+    {
+        "name": "Cluster",
+        "description": "Cluster management endpoints (coordinator mode only)",
+    },
+]
 
 # Mount static files for player CSS/JS
 app.mount("/static", StaticFiles(directory=str(get_static_dir())), name="static")
