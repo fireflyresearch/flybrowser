@@ -140,7 +140,7 @@ class FlyBrowser:
                 - "normal": Standard info logs, no LLM logging
                 - "verbose": Detailed execution + basic LLM timing
                 - "debug": Full technical details + detailed LLM prompts/responses
-            agent_config: AgentConfig instance for ReAct framework configuration.
+            agent_config: AgentConfig instance for BrowserAgent configuration.
                 If provided, this takes precedence over config_file.
                 Example: agent_config=AgentConfig(max_iterations=100)
             config_file: Path to YAML or JSON config file for agent configuration.
@@ -319,7 +319,6 @@ class FlyBrowser:
         self._session_id = None  # Session ID for server mode
 
         # Embedded mode components
-        self.llm = None
         self.browser_manager = None
         self.page_controller = None
         self.element_detector = None
@@ -342,8 +341,8 @@ class FlyBrowser:
         self._source_capture = None
         self._live_view_server = None
         
-        # ReAct framework (native implementation)
-        self.react_agent = None
+        # BrowserAgent (new framework-based agent)
+        self._browser_agent = None
 
         logger.info(f"Initializing FlyBrowser in {self._mode} mode")
 
@@ -406,73 +405,12 @@ class FlyBrowser:
             RecordingManager,
             ScreenshotCapture,
         )
-        from flybrowser.llm.factory import LLMProviderFactory
         from flybrowser.security.pii_handler import PIIConfig, PIIHandler
         from flybrowser.core.performance import get_performance_config
 
-        # Initialize LLM provider with simplified factory
-        logger.info("[SDK] Initializing LLM provider")
-        
-        # Build kwargs for create()
-        create_kwargs = {
-            "vision_enabled": self._vision_enabled,
-            "llm_logging": self._llm_logging,
-        }
-        
-        # Add model_config if provided
-        if self._model_config:
-            create_kwargs.update(self._model_config)
-        
-        # Create provider (always use simple create, no smart selection)
-        self.llm = LLMProviderFactory.create(
-            provider=self._llm_provider,
-            model=self._llm_model or "default",
-            api_key=self._api_key,
-            **create_kwargs
-        )
-        
-        # Trigger provider initialization if available
-        if hasattr(self.llm, 'initialize'):
-            await self.llm.initialize()
-        
-        # Log LLM configuration with discovered capabilities
-        model_info = self.llm.get_model_info()
-        
-        # Build selection info string
-        selection_info = ""
-        if not self._llm_model:
-            selection_info = " (provider default)"
-        
         logger.info(f"LLM Provider: {self._llm_provider}")
-        logger.info(f"Model: {model_info.name}{selection_info}")
-        logger.info(f"Context Window: {model_info.context_window:,} tokens")
-        logger.info(f"Max Output Tokens: {model_info.max_output_tokens:,} tokens")
-        
-        # Log all capabilities detected for this model
-        from flybrowser.llm.base import ModelCapability
-        capability_names = [cap.value for cap in model_info.capabilities]
-        logger.info(f"Model Capabilities: {', '.join(capability_names)}")
-        
-        # Check and log vision capability - this is CRITICAL for proper operation
-        self._vision_enabled = self.llm.vision_enabled
-        if self._vision_enabled:
-            logger.info(f"Vision: [OK] ENABLED (model supports vision)")
-        else:
-            logger.warning(
-                f"Vision: [WARN] DISABLED (model {model_info.name} does not support vision). "
-                f"All vision features will use text-only fallback."
-            )
-        
-        # Log cost information if available
-        if (model_info.cost_per_1k_input_tokens is not None and 
-            model_info.cost_per_1k_input_tokens > 0):
-            logger.info(
-                f"Cost: ${model_info.cost_per_1k_input_tokens:.4f}/1K input, "
-                f"${model_info.cost_per_1k_output_tokens:.4f}/1K output"
-            )
-        else:
-            logger.info("Cost: Free (local model)")
-        
+        logger.info(f"Model: {self._llm_model or 'default'}")
+
         # Log performance configuration
         perf_config = get_performance_config()
         logger.info(f"Performance Preset: {self._speed_preset}")
@@ -588,7 +526,7 @@ class FlyBrowser:
 
         # Initialize components
         self.page_controller = PageController(self.browser_manager.page)
-        self.element_detector = ElementDetector(self.browser_manager.page, self.llm)
+        self.element_detector = ElementDetector(self.browser_manager.page, None)
 
         # Initialize recording components if enabled
         if self._recording_enabled:
@@ -602,38 +540,8 @@ class FlyBrowser:
         # Log LLM logging status
         logger.info(f"LLM Logging: {'enabled' if self._llm_logging else 'disabled'}")
         
-        # Initialize ReAct framework (now the native implementation)
-        await self._initialize_react_framework()
-        
-        # Wire stealth components to ReAct agent after initialization
-        if self._captcha_solver and self.react_agent:
-            self.react_agent.captcha_solver = self._captcha_solver
-            logger.info("[STEALTH] CAPTCHA solver wired to ReAct agent")
-
-    async def _initialize_react_framework(self) -> None:
-        """Initialize the new ReAct framework."""
-        from flybrowser.agents.sdk_integration import ReActBrowserAgent
-        from flybrowser.agents import ExecutionMode
-        
-        logger.info("Initializing ReAct framework...")
-        
-        # Create ReAct agent with autonomous mode and configuration
-        self.react_agent = ReActBrowserAgent(
-            page_controller=self.page_controller,
-            element_detector=self.element_detector,
-            llm_provider=self.llm,
-            agent_config=self._agent_config,
-            execution_mode=ExecutionMode.AUTONOMOUS,
-            enable_memory=True,
-        )
-        
-        # Initialize the agent (registers tools, creates orchestrator)
-        await self.react_agent.initialize()
-        
-        logger.info(
-            f"ReAct framework initialized: "
-            f"{len(self.react_agent.get_tool_list())} tools registered"
-        )
+        # Create new framework-based browser agent
+        self._browser_agent = self._create_browser_agent()
 
     def _create_browser_agent(self):
         """Create the new framework-based BrowserAgent."""
@@ -657,7 +565,11 @@ class FlyBrowser:
             else 50,
             session_id=self._session_id,
         )
-        return BrowserAgent(page_controller=self.page_controller, config=config)
+        return BrowserAgent(
+            page_controller=self.page_controller,
+            config=config,
+            captcha_solver=self._captcha_solver,
+        )
 
     def enable_llm_logging(self, enabled: bool = True, level: int = 1) -> None:
         """
@@ -676,8 +588,7 @@ class FlyBrowser:
             >>> browser.enable_llm_logging(False)  # Disable logging
         """
         self._llm_logging = level if enabled else 0
-        if self.llm:
-            self.llm.enable_llm_logging(enabled, level)
+        logger.info(f"LLM logging {'enabled' if enabled else 'disabled'} (level: {level})")
     
     def configure_search(
         self,
@@ -764,7 +675,7 @@ class FlyBrowser:
         Perform a web search using the configured search provider.
         
         This is a convenience method that directly invokes the search tool
-        without going through the full ReAct reasoning loop. It's faster
+        without going through the full agent reasoning loop. It's faster
         for simple search queries.
         
         Args:
@@ -858,40 +769,29 @@ class FlyBrowser:
                 logger.warning(f"Server search failed, falling back to agent: {e}")
                 # Fall through to agent-based search
         
-        # Embedded mode: Use SearchAgentTool directly for faster execution
+        # Embedded mode: Use BrowserAgent for search
         try:
-            from flybrowser.agents.tools.search import SearchAgentTool
-            
-            # Get or create search tool
-            search_tool = SearchAgentTool.create(
-                llm_provider=self.llm,
-                config=self._agent_config.search_providers,
-            )
-            
-            # Execute search
-            result = await search_tool.execute(
-                query=query,
-                search_type=search_type,
-                max_results=max_results,
-                ranking=ranking,
-            )
-            
+            search_instruction = f"Search the web for: {query}"
+            if search_type != "auto":
+                search_instruction += f" (search type: {search_type})"
+            result = await self._browser_agent.act(search_instruction)
+
             if return_metadata:
                 return create_response(
-                    success=result.success,
-                    data=result.data,
-                    error=result.error,
+                    success=result.get("success", False),
+                    data=result.get("result"),
+                    error=result.get("error"),
                     operation="search",
                     query=query,
-                    metadata=result.metadata,
+                    metadata=result,
                 )
-            
+
             return {
-                "success": result.success,
-                "data": result.data,
-                "error": result.error,
+                "success": result.get("success", False),
+                "data": result.get("result"),
+                "error": result.get("error"),
             }
-            
+
         except Exception as e:
             logger.error(f"Search failed: {e}")
             if return_metadata:
@@ -992,7 +892,7 @@ class FlyBrowser:
         """
         Navigate using natural language instructions.
 
-        Uses the ReAct framework for intelligent navigation with:
+        Uses the BrowserAgent for intelligent navigation with:
         - Natural language understanding ("go to the login page")
         - Smart waiting for page loads
         - Automatic retry on navigation failures
@@ -1025,55 +925,17 @@ class FlyBrowser:
         if self._mode == "server":
             return await self._client.navigate_nl(self._session_id, instruction, context=context or {})
 
-        # Embedded mode: Use ReAct framework with NAVIGATE mode
-        from flybrowser.agents.types import OperationMode
-        
+        # Embedded mode: Use BrowserAgent
         logger.info(f"[navigate] Navigation: {instruction[:100]}...")
-        
-        # CRITICAL: Store current page context and user context in agent memory BEFORE execution
-        try:
-            current_url = await self.page_controller.get_url()
-            current_title = await self.page_controller.get_title()
-            if current_url:
-                self.react_agent.memory.working.set_scratch("current_url", current_url)
-                self.react_agent.memory.working.set_scratch("current_title", current_title or "")
-                logger.debug(f"[navigate] Page context: {current_url} - {current_title}")
-            
-            # Store user-provided context for tool access (convert to dict if ActionContext)
-            if context:
-                from flybrowser.agents.context import ActionContext, ContextValidator
-                
-                # Convert ActionContext to dict if needed
-                context_dict = context.to_dict() if isinstance(context, ActionContext) else context
-                
-                # Validate context if it's an ActionContext instance
-                if isinstance(context, ActionContext):
-                    is_valid, errors = ContextValidator.validate(context)
-                    if not is_valid:
-                        logger.warning(f"[navigate] Context validation warnings: {'; '.join(errors)}")
-                
-                self.react_agent.memory.working.set_scratch("user_context", context_dict)
-                logger.debug(f"[navigate] User context: {list(context_dict.keys())}")
-        except Exception as e:
-            logger.debug(f"[navigate] Could not get page context: {e}")
-        
-        # Execute navigation
-        result_dict = await self.react_agent.execute_task(
-            instruction,
-            max_iterations=10,
-            operation_mode=OperationMode.NAVIGATE,
-        )
-        
-        # Get current page state after navigation
+        result = await self._browser_agent.act(instruction, context=context)
         final_url = await self.page_controller.get_url()
         final_title = await self.page_controller.get_title()
-        
         return {
-            "success": result_dict.get("success", False),
+            "success": result.get("success", False),
             "url": final_url,
             "title": final_title,
-            "navigation_type": "react",
-            "error": result_dict.get("error"),
+            "navigation_type": "framework",
+            "error": result.get("error"),
         }
 
     async def extract(
@@ -1088,7 +950,7 @@ class FlyBrowser:
         """
         Extract data from the current page using natural language.
         
-        Uses the ReAct framework for:
+        Uses the BrowserAgent for:
         - Intelligent data extraction with reasoning
         - Automatic obstacle detection and handling
         - Extraction verification for data quality
@@ -1160,107 +1022,21 @@ class FlyBrowser:
                 )
             return result.get("data", result)
         
-        # Embedded mode: Use ReAct framework with SCRAPE mode
-        # This is optimized for data extraction tasks
-        from flybrowser.agents.types import OperationMode
-        
+        # Embedded mode: Use BrowserAgent
         logger.info(f"[extract] Extracting: {query[:100]}...")
-        
-        # Build extraction task - the agent will understand this is an extraction task
-        # and use appropriate tools (extract_text, screenshot for vision, etc.)
-        task = query
-        if schema:
-            import json
-            task = f"{query}\n\nReturn data matching this schema: {json.dumps(schema)}"
-        
-        # Determine vision override based on use_vision parameter
-        # For extraction, vision can help understand page layout and find data
-        # None = let agent decide based on model capabilities and operation mode
-        # True = force vision (useful for visually complex pages)
-        # False = text-only extraction (faster, cheaper)
-        vision_override = True if use_vision else None
-        
-        # Temporarily adjust max_iterations for extraction (typically simpler than full agent)
-        original_max_iterations = self.react_agent.config.max_iterations
-        if max_iterations != 15:  # User provided custom value
-            self.react_agent.config.max_iterations = max_iterations
-        
-        # Reset LLM session usage before execution to track only this operation
-        if hasattr(self.react_agent.llm, 'reset_session_usage'):
-            self.react_agent.llm.reset_session_usage()
-        
-        # CRITICAL: Store current page context and user context in agent memory BEFORE execution
-        # This lets the agent know what page it's on (e.g., after browser.goto())
-        try:
-            current_url = await self.page_controller.get_url()
-            current_title = await self.page_controller.get_title()
-            if current_url:
-                self.react_agent.memory.working.set_scratch("current_url", current_url)
-                self.react_agent.memory.working.set_scratch("current_title", current_title or "")
-                logger.debug(f"[extract] Page context: {current_url} - {current_title}")
-            
-            # Store user-provided context for tool access (convert to dict if ActionContext)
-            if context:
-                from flybrowser.agents.context import ActionContext, ContextValidator
-                
-                # Convert ActionContext to dict if needed
-                context_dict = context.to_dict() if isinstance(context, ActionContext) else context
-                
-                # Validate context if it's an ActionContext instance
-                if isinstance(context, ActionContext):
-                    is_valid, errors = ContextValidator.validate(context)
-                    if not is_valid:
-                        logger.warning(f"[extract] Context validation warnings: {'; '.join(errors)}")
-                
-                self.react_agent.memory.working.set_scratch("user_context", context_dict)
-                logger.debug(f"[extract] User context: {list(context_dict.keys())}")
-        except Exception as e:
-            logger.debug(f"[extract] Could not get page context: {e}")
-        
-        try:
-            # Call execute() with SCRAPE mode - optimized for data extraction
-            agent_result = await self.react_agent.execute(
-                task,
-                operation_mode=OperationMode.SCRAPE,
-                vision_override=vision_override,
+        result = await self._browser_agent.extract(query, context=context)
+        if return_metadata:
+            return create_response(
+                success=result.get("success", False),
+                data=result.get("result"),
+                error=result.get("error"),
+                operation="extract",
+                query=query,
+                metadata=result,
             )
-            result_dict = agent_result.to_dict()
-            # Add max_iterations to metadata for proper display
-            result_dict["max_iterations"] = self.react_agent.config.max_iterations
-            # Add LLM usage statistics from the provider (tracked for this operation)
-            if hasattr(self.react_agent.llm, 'get_session_usage'):
-                result_dict["llm_usage"] = self.react_agent.llm.get_session_usage()
-            
-            if return_metadata:
-                return create_response(
-                    success=result_dict.get("success", False),
-                    data=result_dict.get("result"),
-                    error=result_dict.get("error"),
-                    operation="extract",
-                    query=query,
-                    llm_usage=result_dict.get("llm_usage"),
-                    metadata=result_dict,
-                )
-            
-            # Backward compatibility: return data directly if successful
-            if result_dict.get("success"):
-                return result_dict.get("result")
-            return {"success": False, "error": result_dict.get("error")}
-            
-        except Exception as e:
-            logger.error(f"[extract] Failed: {e}")
-            if return_metadata:
-                return create_response(
-                    success=False,
-                    data=None,
-                    error=str(e),
-                    operation="extract",
-                    query=query,
-                )
-            return {"success": False, "error": str(e)}
-        finally:
-            # Restore original config
-            self.react_agent.config.max_iterations = original_max_iterations
+        if result.get("success"):
+            return result.get("result")
+        return {"success": False, "error": result.get("error")}
 
     async def act(
         self,
@@ -1273,7 +1049,7 @@ class FlyBrowser:
         """
         Perform an action on the page based on natural language instruction.
         
-        Uses the ReAct framework for:
+        Uses the BrowserAgent for:
         - Intelligent action execution with reasoning
         - Automatic obstacle detection and handling (cookie banners, modals)
         - Action verification to ensure success
@@ -1345,106 +1121,30 @@ class FlyBrowser:
                 )
             return result
 
-        # Embedded mode: Use ReAct framework with EXECUTE mode
-        # This is optimized for fast, targeted actions (click, type, etc.)
-        from flybrowser.agents.types import OperationMode
-        
+        # Embedded mode: Use BrowserAgent
         logger.info(f"[act] Executing action: {instruction[:100]}...")
-        
-        # Determine vision override based on use_vision parameter
-        # For act(), vision helps with element detection and verification
-        # True (default) = use vision to find elements accurately
-        # False = text-only mode (faster but may miss visual elements)
-        vision_override = use_vision if use_vision is not None else None
-        
-        # Temporarily adjust max_iterations for actions (typically quick operations)
-        original_max_iterations = self.react_agent.config.max_iterations
-        if max_iterations != 10:  # User provided custom value
-            self.react_agent.config.max_iterations = max_iterations
-        
-        # Reset LLM session usage before execution to track only this operation
-        if hasattr(self.react_agent.llm, 'reset_session_usage'):
-            self.react_agent.llm.reset_session_usage()
-        
-        # CRITICAL: Store current page context and user context in agent memory BEFORE execution
-        try:
-            current_url = await self.page_controller.get_url()
-            current_title = await self.page_controller.get_title()
-            if current_url:
-                self.react_agent.memory.working.set_scratch("current_url", current_url)
-                self.react_agent.memory.working.set_scratch("current_title", current_title or "")
-                logger.debug(f"[act] Page context: {current_url} - {current_title}")
-            
-            # Store user-provided context for tool access (convert to dict if ActionContext)
-            if context:
-                from flybrowser.agents.context import ActionContext, ContextValidator
-                
-                # Convert ActionContext to dict if needed
-                context_dict = context.to_dict() if isinstance(context, ActionContext) else context
-                
-                # Validate context if it's an ActionContext instance
-                if isinstance(context, ActionContext):
-                    is_valid, errors = ContextValidator.validate(context)
-                    if not is_valid:
-                        logger.warning(f"[act] Context validation warnings: {'; '.join(errors)}")
-                
-                self.react_agent.memory.working.set_scratch("user_context", context_dict)
-                logger.debug(f"[act] User context: {list(context_dict.keys())}")
-        except Exception as e:
-            logger.debug(f"[act] Could not get page context: {e}")
-        
-        try:
-            # Call execute() with EXECUTE mode - optimized for actions
-            agent_result = await self.react_agent.execute(
-                instruction,
-                operation_mode=OperationMode.EXECUTE,
-                vision_override=vision_override,
+        result = await self._browser_agent.act(instruction, context=context)
+        if return_metadata:
+            return create_response(
+                success=result.get("success", False),
+                data=result.get("result"),
+                error=result.get("error"),
+                operation="act",
+                query=instruction,
+                metadata=result,
             )
-            result_dict = agent_result.to_dict()
-            # Add max_iterations to metadata for proper display
-            result_dict["max_iterations"] = self.react_agent.config.max_iterations
-            # Add LLM usage statistics from the provider (tracked for this operation)
-            if hasattr(self.react_agent.llm, 'get_session_usage'):
-                result_dict["llm_usage"] = self.react_agent.llm.get_session_usage()
-            
-            if return_metadata:
-                return create_response(
-                    success=result_dict.get("success", False),
-                    data=result_dict.get("result"),
-                    error=result_dict.get("error"),
-                    operation="act",
-                    query=instruction,
-                    llm_usage=result_dict.get("llm_usage"),
-                    metadata=result_dict,
-                )
-            
-            return {
-                "success": result_dict.get("success", False),
-                "data": result_dict.get("result"),
-                "error": result_dict.get("error"),
-            }
-            
-        except Exception as e:
-            logger.error(f"[act] Failed: {e}")
-            if return_metadata:
-                return create_response(
-                    success=False,
-                    data=None,
-                    error=str(e),
-                    operation="act",
-                    query=instruction,
-                )
-            return {"success": False, "data": None, "error": str(e)}
-        finally:
-            # Restore original config
-            self.react_agent.config.max_iterations = original_max_iterations
+        return {
+            "success": result.get("success", False),
+            "data": result.get("result"),
+            "error": result.get("error"),
+        }
 
     async def execute_task(
         self,
         task: str,
     ) -> Dict[str, Any]:
         """
-        Execute a complex task using the ReAct framework with reasoning and action.
+        Execute a complex task using the BrowserAgent with reasoning and action.
 
         This is a powerful way to automate browser tasks. It uses:
         - Chain-of-thought reasoning to plan multi-step actions
@@ -1500,15 +1200,8 @@ class FlyBrowser:
                 # Fallback to action if execute endpoint not available
                 return await self._client.action(self._session_id, task)
 
-        # Embedded mode: Use ReAct framework with AUTO mode (uses planning)
-        from flybrowser.agents.types import OperationMode
-        
-        # Call execute() - uses agent's configured max_iterations with AUTO mode
-        agent_result = await self.react_agent.execute(
-            task,
-            operation_mode=OperationMode.AUTO,
-        )
-        return agent_result.to_dict()
+        # Embedded mode: Use BrowserAgent
+        return await self._browser_agent.run_task(task)
     
     async def agent(
         self,
@@ -1597,99 +1290,30 @@ class FlyBrowser:
                 # Fallback to execute_task if agent endpoint not available
                 return await self.execute_task(task)
         
-        # Embedded mode: Use ReAct framework (native implementation)
-        logger.info("[ReAct] Using ReAct framework for autonomous execution")
-        
-        # Temporarily update agent config for this execution if user provided custom limits
-        original_max_iterations = self.react_agent.config.max_iterations
-        original_timeout = self.react_agent.config.timeout_seconds
-        
-        if max_iterations != 50:  # User provided custom value
-            self.react_agent.config.max_iterations = max_iterations
-        if max_time_seconds != 1800.0:  # User provided custom value
-            self.react_agent.config.timeout_seconds = max_time_seconds
-        
-        # Reset LLM session usage before execution to track only this operation
-        if hasattr(self.react_agent.llm, 'reset_session_usage'):
-            self.react_agent.llm.reset_session_usage()
-        
-        # CRITICAL: Store current page context and user context in agent memory BEFORE execution
-        try:
-            current_url = await self.page_controller.get_url()
-            current_title = await self.page_controller.get_title()
-            if current_url:
-                self.react_agent.memory.working.set_scratch("current_url", current_url)
-                self.react_agent.memory.working.set_scratch("current_title", current_title or "")
-                logger.debug(f"[agent] Page context: {current_url} - {current_title}")
-            
-            # Store user-provided context for tool access (convert to dict if ActionContext)
-            if context:
-                from flybrowser.agents.context import ActionContext, ContextValidator
-                
-                # Convert ActionContext to dict if needed
-                context_dict = context.to_dict() if isinstance(context, ActionContext) else context
-                
-                # Validate context if it's an ActionContext instance
-                if isinstance(context, ActionContext):
-                    is_valid, errors = ContextValidator.validate(context)
-                    if not is_valid:
-                        logger.warning(f"[agent] Context validation warnings: {'; '.join(errors)}")
-                
-                self.react_agent.memory.working.set_scratch("user_context", context_dict)
-                logger.debug(f"[agent] User context: {list(context_dict.keys())}")
-        except Exception as e:
-            logger.debug(f"[agent] Could not get page context: {e}")
-        
-        try:
-            # Call execute() - uses agent's configured max_iterations and timeout with AUTO mode
-            from flybrowser.agents.types import OperationMode
+        # Embedded mode: Use BrowserAgent with full reasoning
+        logger.info("[agent] Using BrowserAgent for autonomous execution")
+        result = await self._browser_agent.run_task(task, context=context)
 
-            agent_result = await self.react_agent.execute(
-                task,
-                operation_mode=OperationMode.AUTO,
-            )
-            result_dict = agent_result.to_dict()
-            # Add max_iterations to metadata for proper display
-            result_dict["max_iterations"] = self.react_agent.config.max_iterations
-            # Add LLM usage statistics from the provider (tracked for this operation)
-            if hasattr(self.react_agent.llm, 'get_session_usage'):
-                result_dict["llm_usage"] = self.react_agent.llm.get_session_usage()
-        finally:
-            # Restore original config
-            self.react_agent.config.max_iterations = original_max_iterations
-            self.react_agent.config.timeout_seconds = original_timeout
-        
-        # Load completion page showing task summary AFTER all execution is done
-        # This only happens after the entire agent query is solved (success or failure)
+        # Load completion page if browser manager available
         if self.browser_manager:
             try:
-                # Extract completion data safely using helper function
                 completion_data = self._extract_completion_data(
-                    result_dict=result_dict,
-                    task=task,
-                    session_id=self._session_id,
+                    result_dict=result, task=task, session_id=self._session_id,
                 )
-                
                 await self.browser_manager._load_completion_page(**completion_data)
             except Exception as e:
-                # Don't fail the overall operation if completion page fails
-                # But log at warning level so users can see if something went wrong
                 logger.warning(f"[COMPLETION] Could not load completion page: {e}")
-                import traceback
-                logger.debug(f"[COMPLETION] Traceback: {traceback.format_exc()}")
-        
+
         if return_metadata:
-            # Convert dict to AgentRequestResponse
             return create_response(
-                success=result_dict.get("success", False),
-                data=result_dict.get("result"),
-                error=result_dict.get("error"),
+                success=result.get("success", False),
+                data=result.get("result"),
+                error=result.get("error"),
                 operation="agent",
                 query=task,
-                llm_usage=result_dict.get("llm_usage"),
-                metadata=result_dict,
+                metadata=result,
             )
-        return result_dict
+        return result
     
     async def observe(
         self,
@@ -1765,18 +1389,15 @@ class FlyBrowser:
             except Exception:
                 pass  # Fall through to embedded implementation
         
-        # Embedded mode: Use ReAct framework with RESEARCH mode for intelligent element finding
-        # This mode is optimized for discovering and understanding page elements
-        from flybrowser.agents.types import OperationMode
-        
+        # Embedded mode: Use element detector fast path, then BrowserAgent fallback
         logger.info(f"[observe] Finding elements: {query[:100]}...")
-        
+
         try:
             # First, try element detector for fast results (if available)
             if self.element_detector:
                 try:
                     element_info = await self.element_detector.find_element(query)
-                    
+
                     if element_info and element_info.get("selector"):
                         page_state = await self.page_controller.get_page_state()
                         elements = [{
@@ -1790,9 +1411,9 @@ class FlyBrowser:
                             "visible": element_info.get("visible", True),
                             "actionable": element_info.get("actionable", True),
                         }]
-                        
+
                         logger.info(f"[observe] Element detector found {len(elements)} element(s)")
-                        
+
                         if return_metadata:
                             return create_response(
                                 success=True,
@@ -1804,81 +1425,23 @@ class FlyBrowser:
                         return elements
                 except Exception as e:
                     logger.debug(f"[observe] Element detector failed, falling back to agent: {e}")
-            
-            # Fallback: Use ReAct agent with RESEARCH mode to intelligently find elements
-            # The agent will use vision and page analysis to locate elements
-            task = f"Find and identify all elements matching: {query}. For each element found, provide its CSS selector, a description, tag name, visible text, and whether it can be interacted with (clicked, typed into, etc.)."
-            
-            # Temporarily adjust max_iterations for observation
-            original_max_iterations = self.react_agent.config.max_iterations
-            if max_iterations != 10:  # User provided custom value
-                self.react_agent.config.max_iterations = max_iterations
-            
-            # Reset LLM session usage before execution to track only this operation
-            if hasattr(self.react_agent.llm, 'reset_session_usage'):
-                self.react_agent.llm.reset_session_usage()
-            
-            # CRITICAL: Store current page context and user context in agent memory BEFORE execution
-            try:
-                current_url = await self.page_controller.get_url()
-                current_title = await self.page_controller.get_title()
-                if current_url:
-                    self.react_agent.memory.working.set_scratch("current_url", current_url)
-                    self.react_agent.memory.working.set_scratch("current_title", current_title or "")
-                    logger.debug(f"[observe] Page context: {current_url} - {current_title}")
-                
-                # Store user-provided context for tool access (convert to dict if ActionContext)
-                if context:
-                    from flybrowser.agents.context import ActionContext, ContextValidator
-                    
-                    # Convert ActionContext to dict if needed
-                    context_dict = context.to_dict() if isinstance(context, ActionContext) else context
-                    
-                    # Validate context if it's an ActionContext instance
-                    if isinstance(context, ActionContext):
-                        is_valid, errors = ContextValidator.validate(context)
-                        if not is_valid:
-                            logger.warning(f"[observe] Context validation warnings: {'; '.join(errors)}")
-                    
-                    self.react_agent.memory.working.set_scratch("user_context", context_dict)
-                    logger.debug(f"[observe] User context: {list(context_dict.keys())}")
-            except Exception as e:
-                logger.debug(f"[observe] Could not get page context: {e}")
-            
-            try:
-                agent_result = await self.react_agent.execute(
-                    task,
-                    operation_mode=OperationMode.RESEARCH,  # RESEARCH mode for discovery
-                    vision_override=True,  # Always use vision for observe to see the page
+
+            # Fallback: Use BrowserAgent to find elements
+            result = await self._browser_agent.observe(query, context=context)
+            elements = result.get("result", [])
+            if not isinstance(elements, list):
+                elements = [elements] if elements else []
+            logger.info(f"[observe] Agent found {len(elements)} element(s)")
+            if return_metadata:
+                return create_response(
+                    success=result.get("success", False) and len(elements) > 0,
+                    data=elements,
+                    operation="observe",
+                    query=query,
+                    metadata={**result, "method": "browser_agent"},
                 )
-                result_dict = agent_result.to_dict()
-                # Add max_iterations to metadata for proper display
-                result_dict["max_iterations"] = self.react_agent.config.max_iterations
-                # Add LLM usage statistics from the provider (tracked for this operation)
-                if hasattr(self.react_agent.llm, 'get_session_usage'):
-                    result_dict["llm_usage"] = self.react_agent.llm.get_session_usage()
-                
-                # Parse agent result into element list format
-                elements = result_dict.get("result", [])
-                if not isinstance(elements, list):
-                    elements = [elements] if elements else []
-                
-                logger.info(f"[observe] Agent found {len(elements)} element(s)")
-                
-                if return_metadata:
-                    return create_response(
-                        success=result_dict.get("success", False) and len(elements) > 0,
-                        data=elements,
-                        operation="observe",
-                        query=query,
-                        llm_usage=result_dict.get("llm_usage"),
-                        metadata={**result_dict, "method": "react_agent"},
-                    )
-                return elements
-            finally:
-                # Restore original config
-                self.react_agent.config.max_iterations = original_max_iterations
-            
+            return elements
+
         except Exception as e:
             logger.error(f"[observe] Failed: {e}")
             if return_metadata:
@@ -1928,20 +1491,14 @@ class FlyBrowser:
                     break
             return results
         
-        # Embedded mode: Use ReAct framework with AUTO mode
-        from flybrowser.agents.types import OperationMode
-
+        # Embedded mode: Use BrowserAgent
         if parallel:
             # Execute tasks in parallel using asyncio.gather
             import asyncio
 
             async def execute_with_error_handling(task: str) -> Dict[str, Any]:
                 try:
-                    return await self.react_agent.execute_task(
-                        task,
-                        max_iterations=25,
-                        operation_mode=OperationMode.AUTO,
-                    )
+                    return await self._browser_agent.run_task(task)
                 except Exception as e:
                     return {"success": False, "error": str(e), "result": None}
 
@@ -1951,11 +1508,7 @@ class FlyBrowser:
             # Sequential execution
             results = []
             for task in tasks:
-                result = await self.react_agent.execute_task(
-                    task,
-                    max_iterations=25,
-                    operation_mode=OperationMode.AUTO,
-                )
+                result = await self._browser_agent.run_task(task)
                 results.append(result)
                 if stop_on_failure and not result.get("success"):
                     break
@@ -2379,10 +1932,7 @@ class FlyBrowser:
                 "note": "Usage tracking not available in server mode",
             }
         
-        # Embedded mode: get from LLM provider
-        if self.llm:
-            return self.llm.get_session_usage()
-        
+        # Embedded mode: usage tracking not available via new BrowserAgent yet
         return {
             "prompt_tokens": 0,
             "completion_tokens": 0,

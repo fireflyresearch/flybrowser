@@ -232,50 +232,50 @@ class TestFlyBrowserExtract:
         """Test extract in embedded mode returns AgentRequestResponse by default."""
         browser = FlyBrowser()
         browser._started = True
-        browser.orchestrator = MagicMock()
-        browser.orchestrator.execute_extract = AsyncMock(return_value={
+        browser._browser_agent = AsyncMock()
+        browser._browser_agent.extract = AsyncMock(return_value={
             "success": True,
-            "data": {"title": "Example"}
+            "result": {"title": "Example"}
         })
-        
+
         result = await browser.extract("Get the title")
-        
+
         # Default: return_metadata=True returns AgentRequestResponse
         from flybrowser.agents.response import AgentRequestResponse
         assert isinstance(result, AgentRequestResponse)
         assert result.data == {"title": "Example"}
-        browser.orchestrator.execute_extract.assert_awaited_once()
+        browser._browser_agent.extract.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_extract_embedded_mode_raw(self):
         """Test extract in embedded mode with return_metadata=False."""
         browser = FlyBrowser()
         browser._started = True
-        browser.orchestrator = MagicMock()
-        browser.orchestrator.execute_extract = AsyncMock(return_value={
+        browser._browser_agent = AsyncMock()
+        browser._browser_agent.extract = AsyncMock(return_value={
             "success": True,
-            "data": {"title": "Example"}
+            "result": {"title": "Example"}
         })
-        
+
         result = await browser.extract("Get the title", return_metadata=False)
-        
+
         assert result == {"title": "Example"}
 
     @pytest.mark.asyncio
     async def test_extract_embedded_mode_direct(self):
-        """Test extract in embedded mode without orchestrator."""
+        """Test extract in embedded mode using BrowserAgent."""
         browser = FlyBrowser()
         browser._started = True
-        browser.extraction_agent = MagicMock()
-        browser.extraction_agent.execute = AsyncMock(return_value={
+        browser._browser_agent = AsyncMock()
+        browser._browser_agent.extract = AsyncMock(return_value={
             "success": True,
-            "data": {"title": "Example"}
+            "result": {"title": "Example"}
         })
-        
-        result = await browser.extract("Get the title", use_orchestrator=False, return_metadata=False)
-        
+
+        result = await browser.extract("Get the title", return_metadata=False)
+
         assert result == {"title": "Example"}
-        browser.extraction_agent.execute.assert_awaited_once()
+        browser._browser_agent.extract.assert_awaited_once()
 
 
 class TestFlyBrowserAct:
