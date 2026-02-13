@@ -21,6 +21,8 @@ The main entry point for all FlyBrowser command-line functionality.
 Usage:
     flybrowser                    # Launch interactive REPL
     flybrowser repl               # Launch interactive REPL (explicit)
+    flybrowser run <workflow.yaml>  # Run a multi-step workflow
+    flybrowser run --inline "..."   # Run inline pipeline commands
     flybrowser setup [COMMAND]    # Installation/configuration wizard
     flybrowser serve [OPTIONS]    # Start the FlyBrowser service
     flybrowser cluster [COMMAND]  # Cluster management
@@ -314,6 +316,7 @@ Commands:
   act         Perform an action on the page
   screenshot  Take a screenshot
   agent       Run an autonomous agent task
+  run         Run a multi-step browser workflow
   session     Manage browser sessions
   setup       Installation and configuration wizard
   serve       Start the FlyBrowser API service
@@ -329,6 +332,8 @@ Examples:
   flybrowser act "Click login"        # Perform action
   flybrowser screenshot --output s.png # Take screenshot
   flybrowser agent "Find flights"     # Run agent task
+  flybrowser run workflow.yaml        # Run a workflow
+  flybrowser run --inline "goto ... && extract ..."  # Inline workflow
   flybrowser session create           # Create a session
   flybrowser session list             # List sessions
   flybrowser setup configure          # Interactive setup
@@ -535,6 +540,10 @@ Documentation: https://flybrowser.dev/docs
     # direct SDK-like commands (goto, extract, act, screenshot, agent)
     from flybrowser.cli.direct import add_direct_subparsers
     add_direct_subparsers(subparsers)
+
+    # pipeline run command
+    from flybrowser.cli.pipeline import add_pipeline_subparser
+    add_pipeline_subparser(subparsers)
 
     return parser
 
