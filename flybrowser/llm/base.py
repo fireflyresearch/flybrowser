@@ -41,14 +41,30 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
-from flybrowser.llm.cache import LLMCache
-from flybrowser.llm.config import LLMProviderConfig
-from flybrowser.llm.cost_tracker import CostTracker
 from flybrowser.llm.provider_status import ProviderStatus
-from flybrowser.llm.rate_limiter import RateLimiter
-from flybrowser.llm.retry import RetryHandler
 from flybrowser.utils.logger import logger
 from flybrowser.utils.execution_logger import get_execution_logger, LogVerbosity
+
+
+# Stubs for removed modules (functionality now handled by fireflyframework-genai)
+class LLMCache:
+    """Stub -- caching is now handled by fireflyframework-genai."""
+
+
+class LLMProviderConfig:
+    """Stub -- provider config is now handled by fireflyframework-genai model strings."""
+
+
+class CostTracker:
+    """Stub -- cost tracking is now handled by fireflyframework-genai."""
+
+
+class RateLimiter:
+    """Stub -- rate limiting is now handled by fireflyframework-genai."""
+
+
+class RetryHandler:
+    """Stub -- retry logic is now handled by fireflyframework-genai."""
 
 
 class ModelCapability(str, Enum):
