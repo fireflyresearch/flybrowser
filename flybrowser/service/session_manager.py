@@ -19,6 +19,8 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+from fireflyframework_genai.observability import UsageTracker
+
 from flybrowser.sdk import FlyBrowser
 from flybrowser.utils.logger import logger
 
@@ -40,6 +42,7 @@ class SessionManager:
         self.session_timeout = session_timeout
         self._cleanup_task: Optional[asyncio.Task] = None
         self._total_requests = 0
+        self._usage_tracker = UsageTracker()
 
         # Start cleanup task
         self._start_cleanup_task()
@@ -188,21 +191,43 @@ class SessionManager:
 
         logger.info("All sessions cleaned up")
 
+    @property
+    def usage_tracker(self) -> UsageTracker:
+        """Return the usage tracker instance."""
+        return self._usage_tracker
+
     def get_active_session_count(self) -> int:
         """Get the number of active sessions."""
         return len(self.sessions)
+
+    def get_usage_summary(self) -> Dict[str, Any]:
+        """
+        Get usage tracking summary.
+
+        Returns:
+            Dictionary with total_tokens, total_cost_usd, and agent_breakdown.
+        """
+        summary = self._usage_tracker.get_summary()
+        return {
+            "total_tokens": summary.total_tokens,
+            "total_cost_usd": summary.total_cost_usd,
+            "agent_breakdown": summary.by_agent,
+        }
 
     def get_stats(self) -> Dict[str, Any]:
         """
         Get session manager statistics.
 
         Returns:
-            Dictionary with stats
+            Dictionary with stats including usage information.
         """
+        usage = self.get_usage_summary()
         return {
             "active_sessions": len(self.sessions),
             "max_sessions": self.max_sessions,
             "total_requests": self._total_requests,
             "session_timeout": self.session_timeout,
+            "total_cost_usd": usage["total_cost_usd"],
+            "total_tokens": usage["total_tokens"],
         }
 
