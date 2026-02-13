@@ -634,7 +634,31 @@ class FlyBrowser:
             f"ReAct framework initialized: "
             f"{len(self.react_agent.get_tool_list())} tools registered"
         )
-    
+
+    def _create_browser_agent(self):
+        """Create the new framework-based BrowserAgent."""
+        from flybrowser.agents.browser_agent import BrowserAgent, BrowserAgentConfig
+
+        model_map = {
+            "openai": f"openai:{self._llm_model or 'gpt-4o'}",
+            "anthropic": f"anthropic:{self._llm_model or 'claude-3-5-sonnet-latest'}",
+            "gemini": f"google-gla:{self._llm_model or 'gemini-2.0-flash'}",
+            "google": f"google-gla:{self._llm_model or 'gemini-2.0-flash'}",
+            "ollama": f"ollama:{self._llm_model or 'llama3'}",
+        }
+        model_str = model_map.get(
+            self._llm_provider,
+            f"{self._llm_provider}:{self._llm_model or 'gpt-4o'}",
+        )
+        config = BrowserAgentConfig(
+            model=model_str,
+            max_iterations=getattr(self._agent_config, "max_iterations", 50)
+            if self._agent_config
+            else 50,
+            session_id=self._session_id,
+        )
+        return BrowserAgent(page_controller=self.page_controller, config=config)
+
     def enable_llm_logging(self, enabled: bool = True, level: int = 1) -> None:
         """
         Enable or disable LLM request/response logging at runtime.
