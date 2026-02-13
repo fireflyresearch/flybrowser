@@ -4,11 +4,14 @@ FlyBrowser provides comprehensive observability capabilities for monitoring, deb
 
 ## Overview
 
-The observability layer provides three key capabilities:
+The observability layer provides six key capabilities:
 
 - **Command Logging**: Structured logging of all SDK operations, LLM calls, and tool executions
 - **Source Capture**: HTML snapshots, DOM trees, and HAR (HTTP Archive) network logs
 - **Live View**: Real-time browser streaming with iFrame embedding and optional user control
+- **OpenTelemetry Tracing**: Distributed tracing via OTLP export using FireflyTracer
+- **Prometheus Metrics**: Latency, token usage, and operation count metrics via FireflyMetrics
+- **Cost Tracking**: Cumulative cost and token usage summaries via UsageTracker
 
 ## Quick Start
 
@@ -598,9 +601,194 @@ config = ObservabilityConfig(
 )
 ```
 
+## OpenTelemetry Tracing
+
+FlyBrowser integrates with OpenTelemetry via the framework's `FireflyTracer`. This enables distributed tracing across browser sessions, LLM calls, and tool executions.
+
+### Setup
+
+Configure tracing once at application startup:
+
+```python
+from flybrowser.observability.tracing import configure_tracing, get_tracer
+
+# Configure with OTLP exporter
+configure_tracing(
+    otlp_endpoint="http://localhost:4317",  # gRPC OTLP collector
+    console=True,                            # Also print spans to console
+    service_name="flybrowser",               # OpenTelemetry service name
+)
+```
+
+Or use the setup wizard:
+
+```bash
+flybrowser setup observability
+```
+
+### Using the Tracer
+
+```python
+from flybrowser.observability.tracing import get_tracer
+
+tracer = get_tracer()
+
+# Create a custom span
+with tracer.custom_span("my-automation"):
+    await browser.goto("https://example.com")
+    result = await browser.extract("Get the title")
+```
+
+### What Gets Traced
+
+When tracing is configured, the following operations produce spans:
+
+- Browser navigation (`goto`, `back`, `forward`)
+- Page interactions (`click`, `type`, `scroll`)
+- Data extraction (`extract`, `observe`)
+- Agent reasoning steps (each ReAct iteration)
+- LLM API calls (prompt, response, tokens, latency)
+- Tool executions (each toolkit invocation)
+
+### OTLP Export
+
+Traces are exported to any OTLP-compatible collector (Jaeger, Zipkin, Grafana Tempo, Datadog, etc.):
+
+```bash
+# Example: export to Jaeger
+OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 flybrowser serve
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint |
+| `OTEL_SERVICE_NAME` | Service name (default: `flybrowser`) |
+
+## Prometheus Metrics
+
+FlyBrowser exposes Prometheus-compatible metrics via the framework's `FireflyMetrics` for monitoring latency, throughput, and resource consumption.
+
+### Setup
+
+```python
+from flybrowser.observability.metrics import get_metrics
+
+metrics = get_metrics()
+```
+
+### Recording Metrics
+
+```python
+from flybrowser.observability.metrics import record_operation
+
+# Record a single operation with all dimensions
+record_operation(
+    operation="navigate",     # Operation name
+    latency_ms=250,           # Wall-clock time in ms
+    tokens=100,               # Token count
+    cost_usd=0.005,           # Estimated cost in USD
+)
+```
+
+### Available Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `flybrowser_operation_latency_ms` | Histogram | Operation latency in milliseconds |
+| `flybrowser_tokens_total` | Counter | Cumulative token usage |
+| `flybrowser_cost_usd_total` | Counter | Cumulative cost in USD |
+| `flybrowser_operations_total` | Counter | Total operation count by type |
+
+### Prometheus Scrape Configuration
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: flybrowser
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:9090']
+```
+
+## Cost Tracking and Usage Summaries
+
+The `UsageTracker` (from fireflyframework-genai) provides cumulative cost and token tracking across all operations in a session or globally.
+
+### Quick Usage
+
+```python
+from flybrowser.observability.metrics import get_cost_summary, record_operation
+
+# Operations accumulate automatically
+record_operation("extract", tokens=500, cost_usd=0.02)
+record_operation("navigate", tokens=50, cost_usd=0.001)
+record_operation("agent", tokens=2000, cost_usd=0.08)
+
+# Get the summary
+summary = get_cost_summary()
+print(f"Total cost: ${summary['total_cost_usd']:.4f}")
+print(f"Total tokens: {summary['total_tokens']}")
+```
+
+Output:
+
+```
+Total cost: $0.1010
+Total tokens: 2550
+```
+
+### Integration with SessionManager
+
+The `UsageTracker` is integrated into the `SessionManager` so that each session tracks its own usage:
+
+```python
+# Per-session usage is tracked automatically
+# Access via the session info endpoint:
+# GET /sessions/{session_id}
+# Response includes:
+# {
+#   "session_id": "sess_abc123",
+#   "usage": {
+#     "total_tokens": 1500,
+#     "total_cost_usd": 0.045
+#   }
+# }
+```
+
+### Budget Protection
+
+The `CostGuardMiddleware` (from the framework middleware chain) uses the same cost tracking to enforce budget limits:
+
+```python
+from flybrowser.agents.browser_agent import BrowserAgentConfig
+
+config = BrowserAgentConfig(
+    budget_limit_usd=5.0,  # Agent aborts if cost exceeds $5.00
+)
+```
+
+When the accumulated cost exceeds `budget_limit_usd`, the middleware raises an exception to prevent runaway LLM spending.
+
+### Grafana Dashboard Example
+
+Combine Prometheus metrics with Grafana for real-time cost monitoring:
+
+```
+Panels:
+  - Total Cost (USD) over time
+  - Token usage by operation type
+  - P99 latency by operation
+  - Active sessions gauge
+  - Cost per session breakdown
+```
+
 ## See Also
 
 - [SDK Reference](../reference/sdk.md) - Complete API
 - [Configuration](../reference/configuration.md) - All options
 - [Live Streaming](streaming.md) - HLS/DASH/RTMP streaming
 - [Screenshots and Recording](screenshots-recording.md) - Recording sessions
+- [Framework Integration](../architecture/framework-integration.md) - How observability fits into the framework
+- [Setup Wizard](../getting-started/setup-wizard.md) - Observability configuration wizard

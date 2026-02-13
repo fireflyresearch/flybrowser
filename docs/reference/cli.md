@@ -193,7 +193,7 @@ flybrowser version --json
 
 ### flybrowser setup
 
-Installation and configuration wizard.
+Installation and configuration wizard with targeted subcommands.
 
 ```bash
 flybrowser setup [COMMAND]
@@ -203,19 +203,47 @@ flybrowser setup [COMMAND]
 
 | Command | Description |
 |---------|-------------|
-| `configure` | Interactive configuration wizard |
+| (none) | Full interactive setup wizard |
+| `quick` | 30-second quick start (auto-detect LLM, install browser, verify) |
+| `llm` | LLM provider configuration (provider, model, API key) |
+| `server` | Server mode configuration (host, port, workers, TLS) |
+| `observability` | Observability setup (OTLP endpoint, Prometheus, log level) |
+| `security` | Security setup (RBAC enable, JWT secret, admin token) |
+| `verify` | Verify FlyBrowser installation |
+| `configure` | Interactive configuration wizard (legacy) |
 | `install` | Install dependencies |
 | `browsers` | Install Playwright browsers |
+| `jupyter` | Manage Jupyter kernel (install, uninstall, status, fix) |
 
 **Examples:**
 
 ```bash
-# Interactive configuration
-flybrowser setup configure
+# Full interactive wizard
+flybrowser setup
 
-# Install all browsers
-flybrowser setup browsers
+# 30-second quick start
+flybrowser setup quick
+
+# Configure just the LLM provider
+flybrowser setup llm
+
+# Configure server settings
+flybrowser setup server
+
+# Set up observability (tracing + metrics)
+flybrowser setup observability
+
+# Configure RBAC security
+flybrowser setup security
+
+# Verify everything works
+flybrowser setup verify
+
+# Install browsers
+flybrowser setup browsers install
 ```
+
+See [Setup Wizard Guide](../getting-started/setup-wizard.md) for detailed walkthroughs of each subcommand.
 
 ### flybrowser cluster
 
@@ -346,6 +374,104 @@ flybrowser recordings delete rec_123
 flybrowser recordings clean --older-than 30d
 ```
 
+### flybrowser session
+
+Manage browser sessions (create, list, inspect, execute commands, close).
+
+```bash
+flybrowser session <command> [OPTIONS]
+```
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `create` | Create a new browser session |
+| `list` | List active sessions |
+| `info <id>` | Get session details |
+| `connect <id>` | Show connection info for a session |
+| `exec <id> <cmd>` | Run a command on a session |
+| `close <id>` | Close a session |
+| `close-all` | Close all sessions |
+
+**Examples:**
+
+```bash
+# Create a session
+flybrowser session create --provider openai --model gpt-4o
+
+# List sessions
+flybrowser session list --format table
+
+# Run a command on a session
+flybrowser session exec sess_abc123 "extract the page title"
+
+# Close all sessions
+flybrowser session close-all
+```
+
+See [Session Management CLI](../cli/session-management.md) for complete documentation.
+
+### flybrowser goto
+
+Navigate to a URL (direct command, auto-creates ephemeral session).
+
+```bash
+flybrowser goto <url> [--session <id>] [--wait-for <selector>]
+```
+
+### flybrowser extract
+
+Extract data from the current page using natural language.
+
+```bash
+flybrowser extract <query> [--session <id>] [--schema <file>] [--format json|csv|table]
+```
+
+### flybrowser act
+
+Perform a browser action described in natural language.
+
+```bash
+flybrowser act <instruction> [--session <id>]
+```
+
+### flybrowser screenshot
+
+Capture a screenshot of the current page.
+
+```bash
+flybrowser screenshot [--session <id>] [--output <file>] [--full-page]
+```
+
+### flybrowser agent
+
+Run an autonomous agent task.
+
+```bash
+flybrowser agent <task> [--session <id>] [--max-iterations 50] [--stream]
+```
+
+See [Direct Commands](../cli/direct-commands.md) for complete documentation of all direct commands.
+
+### flybrowser run
+
+Run a multi-step browser workflow from a YAML file or inline commands.
+
+```bash
+flybrowser run <workflow.yaml>
+flybrowser run --inline "goto https://example.com && extract 'get the title'"
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `workflow` | | Path to a YAML workflow file |
+| `--inline` | `-i` | Inline commands separated by `&&` |
+
+See [Pipelines](../cli/pipelines.md) for complete documentation.
+
 ### flybrowser uninstall
 
 Uninstall FlyBrowser.
@@ -413,3 +539,7 @@ When using `flybrowser repl`, these commands are available:
 - [SDK Reference](sdk.md) - Python SDK documentation
 - [REST API Reference](rest-api.md) - HTTP API documentation
 - [Configuration](configuration.md) - Configuration options
+- [Session Management CLI](../cli/session-management.md) - Detailed session commands
+- [Direct Commands](../cli/direct-commands.md) - One-shot SDK-like commands
+- [Pipelines](../cli/pipelines.md) - YAML workflow execution
+- [Setup Wizard](../getting-started/setup-wizard.md) - Setup subcommand walkthroughs

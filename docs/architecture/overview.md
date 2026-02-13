@@ -18,23 +18,41 @@ FlyBrowser is an LLM-powered browser automation framework. It delegates LLM orch
                 v                           v
 +---------------------------+  +---------------------------+
 |     Embedded Mode         |  |      Server Mode          |
-|   (Local Playwright)      |  |    (REST API Client)      |
-+-------------+-------------+  +-------------+-------------+
+|   (Local Playwright)      |  | (REST via create_genai_app|
++-------------+-------------+  |  /health, /agents, RBAC)  |
+              |                +-------------+-------------+
               |                              |
               v                              v
 +------------------------------------------------------------------+
 |                      BrowserAgent Layer                           |
 |  +--------------+  +-------------------+  +-------------------+  |
-|  | FireflyAgent |  | ReActPattern      |  | BrowserMemory     |  |
-|  | (framework)  |<-| (reasoning loop)  |->| Manager           |  |
-|  +--------------+  +---------+---------+  +-------------------+  |
-|                              |                                   |
+|  | FireflyAgent |  | Reasoning Pattern |  | BrowserMemory     |  |
+|  | (framework)  |<-| (configurable)    |->| Manager           |  |
+|  +--------------+  +---------+---------+  | (-> MemoryManager)|  |
+|                              |            +-------------------+  |
+|  Reasoning patterns:         |                                   |
+|  - ReActPattern (default)    |                                   |
+|  - PlanAndExecutePattern     |                                   |
+|  - ReflexionPattern          |                                   |
 |                   +----------+----------+                        |
 |                   | 6 ToolKits (32 tools)|                       |
 |                   +----------+----------+                        |
+|                                                                  |
+|  Middleware Chain (in order):                                     |
 |  +-------------------+  +-------------------+                    |
-|  | ObstacleDetection |  | ScreenshotOnError |  (Middleware)      |
+|  | LoggingMiddleware  |  | CostGuardMiddleware| (framework)      |
 |  +-------------------+  +-------------------+                    |
+|  +------------------------+  +-------------------+               |
+|  | ExplainabilityMiddleware|  | ObstacleDetection | (flybrowser) |
+|  +------------------------+  +-------------------+               |
+|  +-------------------+                                           |
+|  | ScreenshotOnError | (flybrowser)                              |
+|  +-------------------+                                           |
+|                                                                  |
+|  Validation:                                                     |
+|  +-------------------+                                           |
+|  | OutputReviewer     | (schema-based extraction with retries)   |
+|  +-------------------+                                           |
 +-----------------------------+------------------------------------+
                               |
               +---------------+---------------+
@@ -59,6 +77,13 @@ FlyBrowser is an LLM-powered browser automation framework. It delegates LLM orch
 |                       Playwright (Browser)                        |
 |               Chromium  |  Firefox  |  WebKit                    |
 +------------------------------------------------------------------+
+
+Cross-cutting concerns:
++------------------------------------------------------------------+
+| Observability: FireflyTracer (OTLP) | FireflyMetrics (Prometheus)|
+| Security: RBACAuthManager (JWT) | APIKeyManager (legacy keys)    |
+| Cost: UsageTracker (per-session and global cost tracking)        |
++------------------------------------------------------------------+
 ```
 
 ## Core Components
@@ -76,9 +101,10 @@ The `FlyBrowser` class is the main entry point:
 The intelligent automation core, built on fireflyframework-genai:
 
 - **FireflyAgent**: Wraps Pydantic AI Agent for LLM orchestration
-- **ReActPattern**: Multi-step reasoning from the framework (`max_steps` configurable)
-- **BrowserMemoryManager**: Tracks page history, navigation graph, obstacle cache, visited URLs
-- **Middleware**: ObstacleDetectionMiddleware and ScreenshotOnErrorMiddleware
+- **Configurable reasoning patterns**: ReActPattern (default), PlanAndExecutePattern, or ReflexionPattern, selected via `BrowserAgentConfig.reasoning_strategy`
+- **BrowserMemoryManager**: Tracks page history, navigation graph, obstacle cache, visited URLs. Delegates to the framework's `MemoryManager` via a dual-write pattern.
+- **Middleware chain**: LoggingMiddleware, CostGuardMiddleware, ExplainabilityMiddleware (framework), plus ObstacleDetectionMiddleware and ScreenshotOnErrorMiddleware (FlyBrowser-specific)
+- **OutputReviewer**: Schema-based extraction validation with automatic retries (used when `extract()` is called with a schema)
 
 ### 3. ToolKit System (`flybrowser/agents/toolkits/`)
 
@@ -138,7 +164,7 @@ flybrowser/
 ├── sdk.py              # FlyBrowser class (unified SDK)
 ├── client.py           # HTTP client for server mode
 ├── agents/
-│   ├── browser_agent.py    # BrowserAgent (FireflyAgent + ReActPattern)
+│   ├── browser_agent.py    # BrowserAgent (FireflyAgent + reasoning patterns)
 │   ├── toolkits/           # 6 ToolKits
 │   │   ├── navigation.py
 │   │   ├── interaction.py
@@ -150,14 +176,23 @@ flybrowser/
 │   │   ├── obstacle.py     # ObstacleDetectionMiddleware
 │   │   └── screenshot.py   # ScreenshotOnErrorMiddleware
 │   ├── memory/
-│   │   └── browser_memory.py  # BrowserMemoryManager
+│   │   └── browser_memory.py  # BrowserMemoryManager (-> MemoryManager)
 │   ├── streaming.py        # AgentStreamEvent, SSE formatting
 │   ├── config.py           # AgentConfig
-│   ├── types.py            # Action, ToolResult, ExecutionState, etc.
-│   ├── memory.py           # AgentMemory, WorkingMemory
+│   ├── types.py            # Action, ToolResult, ReasoningStrategy, etc.
+│   ├── memory.py           # AgentMemory, WorkingMemory (legacy)
 │   ├── response.py         # AgentRequestResponse
 │   ├── context.py          # ContextBuilder, ActionContext
 │   └── scope_validator.py  # BrowserScopeValidator
+├── cli/
+│   ├── main.py         # CLI entry point
+│   ├── session.py      # Session management commands
+│   ├── direct.py       # Direct SDK-like commands (goto, extract, act, ...)
+│   ├── pipeline.py     # Pipeline/workflow execution (run)
+│   ├── setup.py        # Setup wizard (quick, llm, server, observability, security)
+│   ├── repl.py         # Interactive REPL
+│   ├── serve.py        # API server start
+│   └── output.py       # CLI output formatting
 ├── core/
 │   ├── browser.py      # BrowserManager
 │   ├── page.py         # PageController
@@ -165,8 +200,13 @@ flybrowser/
 ├── llm/
 │   ├── base.py         # LLM base types (ModelInfo, LLMResponse)
 │   └── provider_status.py
+├── observability/
+│   ├── tracing.py      # FireflyTracer wrapper (OpenTelemetry)
+│   └── metrics.py      # FireflyMetrics + UsageTracker wrappers
 ├── service/            # REST API service
-│   ├── app.py          # FastAPI app
+│   ├── app.py          # create_genai_app() integration
+│   ├── auth.py         # RBACAuthManager (JWT + API key auth)
+│   ├── session_manager.py  # SessionManager (with UsageTracker)
 │   └── config.py       # Service config
 └── security/
     └── pii_handler.py  # PII masking
@@ -176,18 +216,27 @@ flybrowser/
 
 ### 1. Framework Delegation
 
-LLM orchestration is handled by fireflyframework-genai. FlyBrowser provides browser-specific tools, memory, and middleware:
+LLM orchestration is handled by fireflyframework-genai. FlyBrowser provides browser-specific tools, memory, and middleware. The framework provides logging, cost guard, explainability middleware, reasoning patterns, RBAC security, and observability.
 
 ```python
 # BrowserAgent wires everything together
+self._middleware = [
+    LoggingMiddleware(),                                   # Framework
+    CostGuardMiddleware(budget_usd=config.budget_limit_usd),  # Framework
+    ExplainabilityMiddleware(),                             # Framework
+    ObstacleDetectionMiddleware(page_controller),           # FlyBrowser
+    ScreenshotOnErrorMiddleware(page_controller),           # FlyBrowser
+]
 self._agent = FireflyAgent(
     name="flybrowser",
     model=config.model,
     instructions=_SYSTEM_INSTRUCTIONS,
     tools=self._toolkits,        # 6 ToolKits
-    middleware=self._middleware,  # Obstacle + Screenshot middleware
+    middleware=self._middleware,  # 5-layer middleware chain
 )
-self._react = ReActPattern(max_steps=config.max_iterations)
+# Reasoning pattern selected from config
+self._react = self._create_reasoning_pattern(config)
+# Could be ReActPattern, PlanAndExecutePattern, or ReflexionPattern
 ```
 
 ### 2. Transparent Mode Switching
@@ -215,6 +264,10 @@ context = memory.format_for_prompt()
 
 ## See Also
 
-- [ReAct Framework](react.md) - How BrowserAgent uses ReActPattern
+- [Framework Integration](framework-integration.md) - Detailed framework subsystem integration
+- [ReAct Framework](react.md) - How BrowserAgent uses reasoning patterns
 - [Tools System](tools.md) - ToolKit architecture
-- [Memory System](memory.md) - BrowserMemoryManager details
+- [Memory System](memory.md) - BrowserMemoryManager and framework MemoryManager
+- [Security Architecture](security.md) - RBAC and JWT authentication
+- [Observability](../features/observability.md) - Tracing, metrics, and cost tracking
+- [CLI Reference](../reference/cli.md) - Session, direct, and pipeline commands
