@@ -101,7 +101,7 @@ class TestSessionEndpoints:
         )
         
         # Should fail validation
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_list_sessions(self, test_client, mock_session_manager):
         """Test listing sessions."""
@@ -161,7 +161,7 @@ class TestNavigationEndpoints:
             json={}
         )
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestExtractionEndpoints:
@@ -287,7 +287,7 @@ class TestAutonomousEndpoints:
             json={"context": {}}
         )
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_auto_endpoint_session_not_found(self, test_client, mock_session_manager):
         """Test auto endpoint when session not found."""
@@ -361,7 +361,7 @@ class TestScrapeEndpoints:
             }
         )
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_scrape_endpoint_missing_schema(self, test_client, mock_session_manager):
         """Test scrape endpoint without required target_schema."""
@@ -372,7 +372,7 @@ class TestScrapeEndpoints:
             }
         )
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_scrape_endpoint_invalid_validator(self, test_client, mock_session_manager):
         """Test scrape endpoint with invalid validator name."""
@@ -423,4 +423,4 @@ class TestErrorHandling:
             content="invalid json"
         )
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT

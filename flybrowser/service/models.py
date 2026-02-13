@@ -126,9 +126,11 @@ class NavigateResponse(BaseModel):
 class ExtractRequest(BaseModel):
     """Request to extract data from page."""
 
+    model_config = {"populate_by_name": True}
+
     query: str = Field(..., description="Natural language extraction query")
     use_vision: bool = Field(False, description="Use vision-based extraction")
-    schema: Optional[Dict[str, Any]] = Field(None, description="JSON schema for structured output")
+    output_schema: Optional[Dict[str, Any]] = Field(None, alias="schema", description="JSON schema for structured output")
     context: Dict[str, Any] = Field(
         default_factory=dict,
         description="Additional context to inform extraction (filters, preferences, constraints)"
@@ -598,4 +600,81 @@ class ObserveResponse(BaseModel):
     )
     page_url: Optional[str] = Field(None, description="Current page URL")
     error: Optional[str] = Field(None, description="Error message if failed")
+
+
+# Autonomous mode models
+class AutoRequest(BaseModel):
+    """Request for autonomous goal execution with sub-goal decomposition."""
+
+    goal: str = Field(..., description="High-level goal to accomplish")
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="User-provided context (form data, preferences, constraints)"
+    )
+    max_iterations: Optional[int] = Field(
+        None, ge=1, le=500,
+        description="Maximum action iterations"
+    )
+    max_time_seconds: Optional[float] = Field(
+        None, ge=10.0, le=7200.0,
+        description="Maximum execution time in seconds"
+    )
+    target_schema: Optional[Dict[str, Any]] = Field(
+        None, description="JSON schema for structured output"
+    )
+    max_pages: Optional[int] = Field(
+        None, ge=1, le=1000,
+        description="Maximum pages to navigate/scrape"
+    )
+
+
+class AutoResponse(BaseModel):
+    """Response from autonomous goal execution."""
+
+    success: bool = Field(..., description="Whether the goal was achieved")
+    goal: str = Field(..., description="The original goal")
+    result_data: Optional[Any] = Field(None, description="Produced data or confirmation")
+    sub_goals_completed: int = Field(0, description="Number of sub-goals completed")
+    total_sub_goals: int = Field(0, description="Total sub-goals planned")
+    iterations: int = Field(0, description="Total iterations executed")
+    duration_seconds: float = Field(0.0, description="Total execution time")
+    pages_scraped: int = Field(0, description="Number of pages visited")
+    items_extracted: int = Field(0, description="Number of items extracted")
+    final_url: str = Field("", description="Final URL after execution")
+    actions_taken: List[str] = Field(default_factory=list, description="Summary of actions")
+    suggestions: List[str] = Field(default_factory=list, description="Follow-up suggestions")
+    error_message: Optional[str] = Field(None, description="Error message if failed")
+
+
+class ScrapeRequest(BaseModel):
+    """Request for schema-validated web scraping."""
+
+    goal: str = Field(..., description="Description of what to scrape")
+    target_schema: Dict[str, Any] = Field(
+        ..., description="JSON schema defining the expected output structure"
+    )
+    validators: Optional[List[str]] = Field(
+        None, description="Validation rules to apply to results"
+    )
+    max_pages: Optional[int] = Field(
+        None, ge=1, le=1000,
+        description="Maximum number of pages to scrape"
+    )
+
+
+class ScrapeResponse(BaseModel):
+    """Response from schema-validated scraping."""
+
+    success: bool = Field(..., description="Whether scraping succeeded")
+    goal: str = Field(..., description="The original scraping goal")
+    result_data: Optional[Any] = Field(None, description="Scraped data matching target schema")
+    pages_scraped: int = Field(0, description="Number of pages scraped")
+    items_extracted: int = Field(0, description="Number of items extracted")
+    validation_results: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Results of each validator"
+    )
+    schema_compliance: float = Field(0.0, description="Fraction of items matching schema")
+    duration_seconds: float = Field(0.0, description="Total execution time")
+    final_url: str = Field("", description="Final URL after scraping")
+    error_message: Optional[str] = Field(None, description="Error message if failed")
 

@@ -79,6 +79,8 @@ from flybrowser.service.models import (
     ActionResponse,
     AgentRequest,
     AgentResponse,
+    AutoRequest,
+    AutoResponse,
     ErrorResponse,
     ExtractRequest,
     ExtractResponse,
@@ -101,6 +103,8 @@ from flybrowser.service.models import (
     RecordingStartRequest,
     RecordingStartResponse,
     RecordingStopResponse,
+    ScrapeRequest,
+    ScrapeResponse,
     ScreenshotRequest,
     ScreenshotResponse,
     SecureFillRequest,
@@ -617,7 +621,7 @@ async def extract_data(
             query=request.query,
             context=request.context,
             use_vision=request.use_vision,
-            schema=request.schema,
+            schema=request.output_schema,
             return_metadata=True,
         )
 
@@ -1015,6 +1019,127 @@ async def observe_elements(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Observe failed: {str(e)}",
+        )
+
+
+# Autonomous mode endpoint
+@app.post(
+    "/sessions/{session_id}/auto",
+    response_model=AutoResponse,
+    tags=["Automation"],
+    summary="Autonomous goal execution",
+    description="Execute a complex goal autonomously with sub-goal decomposition.",
+)
+async def execute_auto(
+    session_id: str,
+    request: AutoRequest,
+):
+    """
+    Run an autonomous task that decomposes a goal into sub-goals.
+
+    Suitable for complex, multi-step browser tasks where the agent plans
+    and executes sub-goals autonomously.
+    """
+    try:
+        browser = session_manager.get_session(session_id)
+
+        result = await browser.auto(
+            goal=request.goal,
+            context=request.context,
+            max_iterations=request.max_iterations,
+            max_time_seconds=request.max_time_seconds,
+            target_schema=request.target_schema,
+            max_pages=request.max_pages,
+        )
+
+        if hasattr(result, "to_dict"):
+            result = result.to_dict()
+        elif not isinstance(result, dict):
+            result = {"success": False, "error": str(result)}
+
+        return AutoResponse(
+            success=result.get("success", False),
+            goal=request.goal,
+            result_data=result.get("result_data"),
+            sub_goals_completed=result.get("sub_goals_completed", 0),
+            total_sub_goals=result.get("total_sub_goals", 0),
+            iterations=result.get("iterations", 0),
+            duration_seconds=result.get("duration_seconds", 0.0),
+            pages_scraped=result.get("pages_scraped", 0),
+            items_extracted=result.get("items_extracted", 0),
+            final_url=result.get("final_url", ""),
+            actions_taken=result.get("actions_taken", []),
+            suggestions=result.get("suggestions", []),
+            error_message=result.get("error"),
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session not found: {session_id}",
+        )
+    except Exception as e:
+        logger.error(f"Auto execution failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Auto execution failed: {str(e)}",
+        )
+
+
+# Scrape endpoint
+@app.post(
+    "/sessions/{session_id}/scrape",
+    response_model=ScrapeResponse,
+    tags=["Automation"],
+    summary="Schema-validated web scraping",
+    description="Scrape structured data with schema validation and pagination.",
+)
+async def execute_scrape(
+    session_id: str,
+    request: ScrapeRequest,
+):
+    """
+    Scrape structured data from one or more pages.
+
+    Navigates pages, extracts data matching the target schema, and
+    validates results against provided validators.
+    """
+    try:
+        browser = session_manager.get_session(session_id)
+
+        result = await browser.scrape(
+            goal=request.goal,
+            target_schema=request.target_schema,
+            validators=request.validators,
+            max_pages=request.max_pages,
+        )
+
+        if hasattr(result, "to_dict"):
+            result = result.to_dict()
+        elif not isinstance(result, dict):
+            result = {"success": False, "error": str(result)}
+
+        return ScrapeResponse(
+            success=result.get("success", False),
+            goal=request.goal,
+            result_data=result.get("result_data"),
+            pages_scraped=result.get("pages_scraped", 0),
+            items_extracted=result.get("items_extracted", 0),
+            validation_results=result.get("validation_results", []),
+            schema_compliance=result.get("schema_compliance", 0.0),
+            duration_seconds=result.get("duration_seconds", 0.0),
+            final_url=result.get("final_url", ""),
+            error_message=result.get("error"),
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session not found: {session_id}",
+        )
+    except Exception as e:
+        logger.error(f"Scrape execution failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Scrape execution failed: {str(e)}",
         )
 
 

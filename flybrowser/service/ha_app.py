@@ -1104,6 +1104,120 @@ def create_ha_app(config: Optional[HANodeConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.post("/sessions/{session_id}/auto", tags=["Automation"])
+    async def execute_auto(session_id: str, request: Request):
+        """Run an autonomous task that decomposes a goal into sub-goals.
+
+        Suitable for complex, multi-step browser tasks where the agent plans
+        and executes sub-goals autonomously.
+        """
+        node = get_ha_node()
+        session, redirect_addr = _get_session_or_redirect(session_id)
+
+        if redirect_addr:
+            return RedirectResponse(
+                url=f"http://{redirect_addr}/sessions/{session_id}/auto",
+                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            )
+
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        goal = body.get("goal")
+
+        if not goal:
+            raise HTTPException(status_code=400, detail="goal is required")
+
+        try:
+            browser = node._session_manager.get_session(session_id)
+            result = await browser.auto(
+                goal=goal,
+                context=body.get("context", {}),
+                max_iterations=body.get("max_iterations"),
+                max_time_seconds=body.get("max_time_seconds"),
+                target_schema=body.get("target_schema"),
+                max_pages=body.get("max_pages"),
+            )
+
+            if hasattr(result, "to_dict"):
+                result = result.to_dict()
+            elif not isinstance(result, dict):
+                result = {"success": False, "error": str(result)}
+
+            return {
+                "success": result.get("success", False),
+                "goal": goal,
+                "result_data": result.get("result_data"),
+                "sub_goals_completed": result.get("sub_goals_completed", 0),
+                "total_sub_goals": result.get("total_sub_goals", 0),
+                "iterations": result.get("iterations", 0),
+                "duration_seconds": result.get("duration_seconds", 0.0),
+                "pages_scraped": result.get("pages_scraped", 0),
+                "items_extracted": result.get("items_extracted", 0),
+                "final_url": result.get("final_url", ""),
+                "actions_taken": result.get("actions_taken", []),
+                "suggestions": result.get("suggestions", []),
+                "error": result.get("error"),
+            }
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Session not found locally")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/sessions/{session_id}/scrape", tags=["Automation"])
+    async def execute_scrape(session_id: str, request: Request):
+        """Scrape structured data from one or more pages.
+
+        Navigates pages, extracts data matching the target schema, and
+        validates results against provided validators.
+        """
+        node = get_ha_node()
+        session, redirect_addr = _get_session_or_redirect(session_id)
+
+        if redirect_addr:
+            return RedirectResponse(
+                url=f"http://{redirect_addr}/sessions/{session_id}/scrape",
+                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            )
+
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        goal = body.get("goal")
+        target_schema = body.get("target_schema")
+
+        if not goal:
+            raise HTTPException(status_code=400, detail="goal is required")
+        if not target_schema:
+            raise HTTPException(status_code=400, detail="target_schema is required")
+
+        try:
+            browser = node._session_manager.get_session(session_id)
+            result = await browser.scrape(
+                goal=goal,
+                target_schema=target_schema,
+                validators=body.get("validators"),
+                max_pages=body.get("max_pages"),
+            )
+
+            if hasattr(result, "to_dict"):
+                result = result.to_dict()
+            elif not isinstance(result, dict):
+                result = {"success": False, "error": str(result)}
+
+            return {
+                "success": result.get("success", False),
+                "goal": goal,
+                "result_data": result.get("result_data"),
+                "pages_scraped": result.get("pages_scraped", 0),
+                "items_extracted": result.get("items_extracted", 0),
+                "validation_results": result.get("validation_results", []),
+                "schema_compliance": result.get("schema_compliance", 0.0),
+                "duration_seconds": result.get("duration_seconds", 0.0),
+                "final_url": result.get("final_url", ""),
+                "error": result.get("error"),
+            }
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Session not found locally")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post("/sessions/{session_id}/workflow", tags=["Automation"])
     async def execute_workflow(session_id: str, request: Request):
         """Execute a multi-step workflow."""

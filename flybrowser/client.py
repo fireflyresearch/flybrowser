@@ -732,6 +732,91 @@ class FlyBrowserClient:
             json={"query": query, "return_selectors": return_selectors, "context": context or {}},
         ) or {}
 
+    # ==================== Autonomous Mode API ====================
+
+    async def auto(
+        self,
+        session_id: str,
+        goal: str,
+        context: Optional[Dict[str, Any]] = None,
+        max_iterations: Optional[int] = None,
+        max_time_seconds: Optional[float] = None,
+        target_schema: Optional[Dict[str, Any]] = None,
+        max_pages: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Run an autonomous task that decomposes a goal into sub-goals.
+
+        Suitable for complex, multi-step browser tasks where the agent plans
+        and executes sub-goals autonomously.
+
+        Args:
+            session_id: Session ID
+            goal: High-level goal to accomplish
+            context: Optional context (form data, preferences, constraints)
+            max_iterations: Maximum action iterations
+            max_time_seconds: Maximum execution time in seconds
+            target_schema: Optional JSON schema for structured output
+            max_pages: Maximum pages to navigate/scrape
+
+        Returns:
+            Execution result including success, result_data, iterations, etc.
+        """
+        data: Dict[str, Any] = {"goal": goal}
+        if context is not None:
+            data["context"] = context
+        if max_iterations is not None:
+            data["max_iterations"] = max_iterations
+        if max_time_seconds is not None:
+            data["max_time_seconds"] = max_time_seconds
+        if target_schema is not None:
+            data["target_schema"] = target_schema
+        if max_pages is not None:
+            data["max_pages"] = max_pages
+
+        return await self._request(
+            "POST",
+            f"/sessions/{session_id}/auto",
+            base_url=self._get_session_url(session_id),
+            json=data,
+        ) or {}
+
+    async def scrape(
+        self,
+        session_id: str,
+        goal: str,
+        target_schema: Dict[str, Any],
+        validators: Optional[List[str]] = None,
+        max_pages: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Scrape structured data from one or more pages.
+
+        Navigates pages, extracts data matching the target schema, and
+        optionally validates results against provided validators.
+
+        Args:
+            session_id: Session ID
+            goal: Description of what to scrape
+            target_schema: JSON schema defining the expected output structure
+            validators: Optional list of validation rules to apply
+            max_pages: Maximum number of pages to scrape
+
+        Returns:
+            Scrape result including result_data, pages_scraped,
+            items_extracted, validation_results, schema_compliance.
+        """
+        data: Dict[str, Any] = {"goal": goal, "target_schema": target_schema}
+        if validators is not None:
+            data["validators"] = validators
+        if max_pages is not None:
+            data["max_pages"] = max_pages
+
+        return await self._request(
+            "POST",
+            f"/sessions/{session_id}/scrape",
+            base_url=self._get_session_url(session_id),
+            json=data,
+        ) or {}
+
     # ==================== Cluster API ====================
 
     async def get_cluster_status(self) -> Dict[str, Any]:
