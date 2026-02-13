@@ -102,18 +102,24 @@ if not result.success:
 
 ### LLM Errors
 
+**Rate limit errors (HTTP 429) are handled automatically.** FlyBrowser retries
+with exponential backoff at two layers:
+
+1. **Framework layer** — `FireflyAgent.run()` retries using `AdaptiveBackoff`
+   (configurable via `FIREFLY_GENAI_RATE_LIMIT_MAX_RETRIES`, default 3)
+2. **Adapter layer** — `FrameworkLLMAdapter` wraps each call with
+   `_execute_with_rate_limit_retry()` for an additional retry layer
+
+You typically do not need to handle rate limits yourself. For other LLM errors:
+
 ```python
 result = await browser.extract("get complex data")
 
 if not result.success:
     error = str(result.error).lower()
-    
-    if "rate limit" in error:
-        print("Hit API rate limit, waiting...")
-        await asyncio.sleep(60)
-    elif "token" in error or "context" in error:
+
+    if "token" in error or "context" in error:
         print("Request too large for model context")
-        # FlyBrowser handles this automatically in most cases
         # Use more specific extraction instructions to reduce content size
     elif "api key" in error:
         print("Invalid or expired API key")

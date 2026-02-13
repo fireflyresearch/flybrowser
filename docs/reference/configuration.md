@@ -83,6 +83,31 @@ browser = FlyBrowser(
 | `ANTHROPIC_API_KEY` | | Anthropic API key |
 | `GOOGLE_API_KEY` | | Google Gemini API key |
 
+### Rate Limit Retry Configuration
+
+These variables control automatic retry behavior for HTTP 429 rate limit errors.
+The retry applies at the framework level (`FireflyAgent.run()`) with exponential
+backoff and jitter.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FIREFLY_GENAI_QUOTA_ENABLED` | `true` | Enable adaptive backoff and quota management |
+| `FIREFLY_GENAI_RATE_LIMIT_MAX_RETRIES` | `3` | Maximum retry attempts for 429 errors |
+| `FIREFLY_GENAI_RATE_LIMIT_BASE_DELAY` | `1.0` | Base delay (seconds) for exponential backoff |
+| `FIREFLY_GENAI_RATE_LIMIT_MAX_DELAY` | `60.0` | Maximum delay (seconds) between retries |
+
+SDK-level configuration:
+
+```python
+from flybrowser import FlyBrowser
+
+browser = FlyBrowser(
+    max_retries=5,           # Retry up to 5 times on 429
+    retry_base_delay=2.0,    # Start with 2s delay
+    rate_limit_max_delay=120.0,  # Cap at 2 minutes
+)
+```
+
 ### Browser Pool Configuration
 
 Nested variables use double underscore (`__`) as separator.

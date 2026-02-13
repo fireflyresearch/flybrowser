@@ -122,21 +122,31 @@ curl https://api.openai.com/v1/models \
 **Symptoms:**
 - `LLMError: Rate limit exceeded`
 - `429 Too Many Requests`
+- Log messages: `Rate limit hit on 'openai:gpt-4o' (attempt 1/3), retrying in 2.0s…`
 
-**Solutions:**
+**How it works:**
 
-1. The framework (fireflyframework-genai) handles retries automatically. Wait and retry your request.
+FlyBrowser automatically retries 429 errors with exponential backoff at two layers:
+- **Layer 1 (Framework):** `FireflyAgent.run()` retries up to `rate_limit_max_retries` times (default: 3)
+- **Layer 2 (Adapter):** `FrameworkLLMAdapter` applies an additional retry via `_execute_with_rate_limit_retry()`
 
-2. Reduce request frequency by adding delays between operations:
+**Solutions if retries still exhaust:**
+
+1. Increase retry limits:
 ```python
-import asyncio
-await asyncio.sleep(2)  # Wait between operations
+import os
+os.environ["FIREFLY_GENAI_RATE_LIMIT_MAX_RETRIES"] = "5"
+os.environ["FIREFLY_GENAI_RATE_LIMIT_BASE_DELAY"] = "3.0"
 ```
 
-3. Switch to a different model or provider:
+2. Reduce concurrent sessions or request frequency.
+
+3. Switch to a model with higher rate limits:
 ```python
 browser = FlyBrowser(llm_provider="anthropic")
 ```
+
+4. Check provider dashboard for current quotas and usage.
 
 ### Invalid Responses
 
