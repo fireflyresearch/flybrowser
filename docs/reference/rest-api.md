@@ -74,7 +74,7 @@ Create a new browser session.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `llm_provider` | string | Yes | LLM provider (openai, anthropic, ollama, gemini) |
-| `llm_model` | string | No | Specific model (e.g., gpt-4o, claude-3-5-sonnet) |
+| `llm_model` | string | No | Specific model (e.g., gpt-4o, claude-sonnet-4-5-20250929) |
 | `api_key` | string | Depends | API key for the LLM provider |
 | `headless` | boolean | No | Run browser in headless mode (default: true) |
 | `browser_type` | string | No | Browser type: chromium, firefox, webkit (default: chromium) |

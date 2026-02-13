@@ -751,12 +751,15 @@ browser._session_id  # Session ID (server mode)
 
 ## Supported LLM Providers
 
+LLM orchestration is delegated to [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai). FlyBrowser passes the provider and model to the framework's `FireflyAgent`.
+
 | Provider | Models | Vision |
 |----------|--------|--------|
-| OpenAI | gpt-4o, gpt-4o-mini, gpt-4-turbo | Yes |
-| Anthropic | claude-3-5-sonnet, claude-3-opus, claude-3-haiku | Yes |
-| Google | gemini-1.5-pro, gemini-1.5-flash | Yes |
-| Ollama | llama3, mistral, qwen, etc. | Varies |
+| OpenAI | gpt-5.2, gpt-5-mini, gpt-4o, gpt-4o-mini | Yes |
+| Anthropic | claude-sonnet-4-5-20250929, claude-3-5-sonnet-20241022 | Yes |
+| Google | gemini-2.0-flash, gemini-1.5-pro | Yes |
+| Qwen | qwen3, qwen-plus, qwen-vl | Yes |
+| Ollama | qwen3, llama3.2, gemma3, etc. | Varies |
 
 ---
 

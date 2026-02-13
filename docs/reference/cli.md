@@ -71,7 +71,7 @@ flybrowser repl [OPTIONS]
 flybrowser repl
 
 # Use Anthropic Claude
-flybrowser repl -p anthropic -m claude-3-5-sonnet-20241022
+flybrowser repl -p anthropic -m claude-sonnet-4-5-20250929
 
 # Visible browser
 flybrowser repl --no-headless

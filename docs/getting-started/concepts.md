@@ -2,9 +2,11 @@
 
 Understanding these fundamental concepts will help you get the most out of FlyBrowser. This guide explains how the framework works under the hood and why it makes certain decisions.
 
+FlyBrowser is built on top of [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai), Firefly's open-source agent framework. It provides the ReAct reasoning loop, multi-provider LLM support, and the ToolKit system. FlyBrowser layers on browser-specific tools, memory, and middleware.
+
 ## The ReAct Paradigm
 
-FlyBrowser is built on the ReAct (Reasoning and Acting) paradigm, a methodology where an AI agent alternates between thinking about what to do and actually doing it. This cycle of thought, action, and observation continues until the task is complete.
+FlyBrowser uses the ReAct (Reasoning and Acting) paradigm via `ReActPattern` from fireflyframework-genai, where an AI agent alternates between thinking about what to do and actually doing it. This cycle of thought, action, and observation continues until the task is complete.
 
 ### The Thought-Action-Observation Cycle
 
@@ -61,37 +63,25 @@ Used by `agent()` for autonomous tasks:
 - Smart exploration scope
 - Comprehensive memory for complex workflows
 
-## The Tool System
+## The ToolKit System
 
-FlyBrowser exposes browser capabilities through a tool registry. When the agent decides to take an action, it selects and invokes a tool from this registry.
+FlyBrowser organizes browser capabilities into six ToolKits built on `fireflyframework_genai.tools.toolkit.ToolKit`. When the agent decides to take an action, it selects and invokes a tool from the registered ToolKits.
 
-### Core Tool Categories
+### ToolKit Categories
 
-**Navigation Tools**
-- `navigate` / `goto` - Go to URLs
-- `go_back` / `go_forward` - Browser history
-- `refresh` - Reload the page
+**NavigationToolkit** — `navigate`, `go_back`, `go_forward`, `refresh`
 
-**Interaction Tools**
-- `click` - Click on elements
-- `type_text` - Enter text in fields
-- `scroll` - Scroll the page
-- `hover` - Hover over elements
-- `select` - Choose dropdown options
+**InteractionToolkit** — `click`, `type_text`, `scroll`, `hover`, `press_key`, `fill`, `select_option`, `check_checkbox`, `focus`, `wait_for_selector`, `double_click`, `right_click`, `drag_and_drop`, `upload_file`, `evaluate_javascript`, `get_attribute`, `clear_input`
 
-**Extraction Tools**
-- `extract_text` - Get text content
-- `extract_table` - Get tabular data
-- `get_attribute` - Get element attributes
-- `get_page_state` - Get page structure
+**ExtractionToolkit** — `extract_text`, `screenshot`, `get_page_state`
 
-**System Tools**
-- `complete` - Signal task completion with result
-- `fail` - Signal task failure with reason
-- `screenshot` - Capture page image
-- `wait` - Wait for conditions
+**SystemToolkit** — `complete`, `fail`, `wait`, `ask_user`
 
-Each tool has metadata describing its parameters, safety level, and capabilities required to use it.
+**SearchToolkit** — `search`
+
+**CaptchaToolkit** — `detect_captcha`, `solve_captcha`, `wait_captcha_resolved`
+
+All 32 tools across 6 ToolKits are created via `create_all_toolkits()` and registered with the `FireflyAgent` from [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai).
 
 ### Tool Results
 
@@ -366,31 +356,15 @@ if not result.success:
 
 ## LLM Providers
 
-FlyBrowser supports multiple LLM providers with a unified interface.
+FlyBrowser delegates all LLM orchestration to [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai). The framework handles provider creation, API calls, retries, streaming, and tool calling via its `FireflyAgent` class.
 
 ### Supported Providers
 
-- **OpenAI** - GPT-4o, GPT-4o-mini, GPT-4 Turbo
-- **Anthropic** - Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku
-- **Google** - Gemini 1.5 Pro, Gemini 1.5 Flash
-- **Ollama** - Local models (Llama, Mistral, etc.)
-
-### Model Capabilities
-
-Different models have different capabilities:
-
-```python
-class ModelCapability(Enum):
-    VISION = "vision"           # Can process images
-    STRUCTURED_OUTPUT = "structured_output"  # JSON mode
-    TOOL_CALLING = "tool_calling"   # Function calling
-    STREAMING = "streaming"      # Stream responses
-```
-
-FlyBrowser automatically adapts its behavior based on available capabilities. For example:
-- Vision-capable models get screenshots
-- Text-only models get DOM descriptions
-- Some tools are only available to models with certain capabilities
+- **OpenAI** — GPT-5.2, GPT-5-mini, GPT-4o, GPT-4o-mini
+- **Anthropic** — Claude 4.5 Sonnet, Claude 3.5 Sonnet
+- **Google** — Gemini 2.0 Flash, Gemini 1.5 Pro
+- **Qwen** — Qwen3, Qwen-Plus, Qwen-VL
+- **Ollama** — Local models (Qwen3, Llama 3.2, Gemma 3)
 
 ### Switching Providers
 
@@ -401,8 +375,8 @@ browser = FlyBrowser(llm_provider="openai", api_key="sk-...")
 # Anthropic
 browser = FlyBrowser(llm_provider="anthropic", api_key="sk-ant-...")
 
-# Local Ollama
-browser = FlyBrowser(llm_provider="ollama", llm_model="llama3")
+# Local Ollama (no API key needed)
+browser = FlyBrowser(llm_provider="ollama", llm_model="qwen3:8b")
 ```
 
 ## Asynchronous Execution

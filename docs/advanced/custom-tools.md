@@ -298,7 +298,7 @@ class JsonValidatorTool(BaseTool):
 ```python
 from flybrowser.agents.tools.base import BaseTool, ToolMetadata, ToolParameter
 from flybrowser.agents.types import ToolCategory, SafetyLevel, ToolResult
-from flybrowser.llm.base import ModelCapability
+from flybrowser.llm.base import ModelCapability  # internal type for tool requirements
 
 class VisualComparisonTool(BaseTool):
     """Compare two screenshots for visual differences."""

@@ -1,6 +1,6 @@
 # FlyBrowser Documentation
 
-FlyBrowser is a browser automation and web scraping framework that uses Large Language Models to enable natural language control of web browsers. Instead of writing complex selectors and handling the intricacies of web page interaction manually, you describe what you want in plain English and FlyBrowser figures out how to accomplish it.
+FlyBrowser is a browser automation and web scraping framework built on top of [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai) that uses Large Language Models to enable natural language control of web browsers. Instead of writing complex selectors and handling the intricacies of web page interaction manually, you describe what you want in plain English and FlyBrowser figures out how to accomplish it.
 
 ## What Makes FlyBrowser Different
 
@@ -60,12 +60,13 @@ The same code works in all three modes. The only difference is how you initializ
 
 ## Supported LLM Providers
 
-FlyBrowser works with multiple LLM providers:
+LLM orchestration is handled by [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai). FlyBrowser works with multiple providers:
 
-- **OpenAI** - GPT-4o, GPT-4o-mini, GPT-3.5-turbo
-- **Anthropic** - Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku
-- **Google** - Gemini 2.0 Flash, Gemini 1.5 Pro
-- **Ollama** - Local models like Qwen3, Llama 3.2, Gemma 3
+- **OpenAI** — GPT-5.2, GPT-5-mini, GPT-4o, GPT-4o-mini
+- **Anthropic** — Claude 4.5 Sonnet, Claude 3.5 Sonnet
+- **Google** — Gemini 2.0 Flash, Gemini 1.5 Pro
+- **Qwen** — Qwen3, Qwen-Plus, Qwen-VL
+- **Ollama** — Local models like Qwen3, Llama 3.2, Gemma 3
 
 Vision-capable models enable FlyBrowser to analyze screenshots for better understanding of complex page layouts.
 
@@ -88,32 +89,34 @@ Vision-capable models enable FlyBrowser to analyze screenshots for better unders
 
 ### Features
 
-- [Natural Language Actions](features/natural-language-actions.md) - The act() method in depth
-- [Intelligent Extraction](features/intelligent-extraction.md) - The extract() method in depth
-- [Autonomous Agent](features/autonomous-agent.md) - The agent() method for complex tasks
-- [Element Observation](features/element-observation.md) - The observe() method
+- [Act](features/act.md) - The act() method in depth
+- [Extract](features/extract.md) - The extract() method in depth
+- [Agent](features/agent.md) - The agent() method for complex tasks
+- [Observe](features/observe.md) - The observe() method
 - [Navigation](features/navigation.md) - URL and natural language navigation
-- [Screenshots and Recording](features/screenshots-recording.md) - Capturing browser sessions
-- [Live Streaming](features/live-streaming.md) - HLS, DASH, and RTMP streaming
-- [PII Protection](features/pii-protection.md) - Secure credential handling
+- [Screenshots](features/screenshots.md) - Capturing browser sessions
+- [Streaming](features/streaming.md) - HLS, DASH, and RTMP streaming
+- [PII Handling](features/pii.md) - Secure credential handling
 - [Search](features/search.md) - Multi-provider web search with intelligent ranking
 - [Stealth Mode](features/stealth.md) - Fingerprint generation, CAPTCHA solving, and proxy network
-- [Observability](features/observability.md) - Command logging, source capture, live view, and interactive completion page with robust data handling
+- [Obstacle Detection](features/obstacle-detection.md) - Automatic popup/modal dismissal
+- [Observability](features/observability.md) - Command logging, source capture, live view, and completion page
 
 ### Architecture
 
 - [System Overview](architecture/overview.md) - High-level architecture
-- [ReAct Framework](architecture/react-framework.md) - The reasoning and acting loop
-- [Tool System](architecture/tool-system.md) - How browser tools work
-- [Memory System](architecture/memory-system.md) - Context and memory management
-- [LLM Integration](architecture/llm-integration.md) - Provider abstraction and capabilities
-- [Response Validation](architecture/response-validation.md) - Ensuring quality outputs
+- [ReAct Framework](architecture/react.md) - The reasoning and acting loop
+- [Tools System](architecture/tools.md) - ToolKit architecture
+- [Memory System](architecture/memory.md) - BrowserMemoryManager details
+- [LLM Integration](architecture/llm-integration.md) - fireflyframework-genai provider delegation
+- [Response Validation](architecture/validation.md) - Ensuring quality outputs
+- [Context System](architecture/context.md) - Context building and management
 
 ### Deployment
 
-- [Embedded Mode](deployment/embedded-mode.md) - Running in scripts and notebooks
-- [Standalone Server](deployment/standalone-server.md) - Single server deployment
-- [Cluster Mode](deployment/cluster-mode.md) - Distributed high-availability deployment
+- [Embedded Mode](deployment/embedded.md) - Running in scripts and notebooks
+- [Standalone Server](deployment/standalone.md) - Single server deployment
+- [Cluster Mode](deployment/cluster.md) - Distributed high-availability deployment
 - [Docker](deployment/docker.md) - Container deployment
 - [Kubernetes](deployment/kubernetes.md) - Orchestrated deployment
 
@@ -123,13 +126,12 @@ Vision-capable models enable FlyBrowser to analyze screenshots for better unders
 - [REST API Reference](reference/rest-api.md) - HTTP endpoint documentation
 - [CLI Reference](reference/cli.md) - Command-line tools
 - [Configuration](reference/configuration.md) - All configuration options
-- [Environment Variables](reference/environment-variables.md) - Environment variable reference
 
 ### Advanced Topics
 
 - [Custom Tools](advanced/custom-tools.md) - Creating your own browser tools
-- [Custom LLM Providers](advanced/custom-llm-providers.md) - Adding new LLM backends
-- [Performance Tuning](advanced/performance-tuning.md) - Optimization strategies
+- [Custom Providers](advanced/custom-providers.md) - Adding LLM provider support
+- [Performance](advanced/performance.md) - Optimization strategies
 - [Troubleshooting](advanced/troubleshooting.md) - Common issues and solutions
 
 ### Examples

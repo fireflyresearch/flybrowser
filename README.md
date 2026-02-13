@@ -11,11 +11,11 @@ _/ ____\  | ___.__.\_ |_________  ______  _  ________ ___________
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
 
 **LLM-powered browser automation that speaks your language.**
 
-FlyBrowser combines Playwright's bulletproof browser control with LLM intelligence, letting you automate the web using plain English instead of brittle CSS selectors. Whether you're scraping data, testing UIs, or building automation workflows, FlyBrowser just works—and it speaks every language your LLM does.
+FlyBrowser combines Playwright's bulletproof browser control with LLM intelligence, letting you automate the web using plain English instead of brittle CSS selectors. Built on top of [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai) — Firefly's open-source agent framework — FlyBrowser inherits production-grade ReAct reasoning, multi-provider LLM support, and a composable toolkit system. Whether you're scraping data, testing UIs, or building automation workflows, FlyBrowser just works — and it speaks every language your LLM does.
 
 ```python
 await browser.goto("https://example.com")
@@ -47,10 +47,8 @@ stream = await browser.start_stream(protocol="hls", quality="high")
   - [Parallel Site Exploration](#parallel-site-exploration)
   - [Architecture Overview](#architecture-overview)
   - [Key Components](#key-components)
-  - [Tools (Not Agents)](#tools-not-agents)
   - [Automatic Obstacle Handling](#automatic-obstacle-handling)
-  - [Reasoning Strategies](#reasoning-strategies)
-  - [Task Planning](#task-planning)
+  - [Reasoning Strategy](#reasoning-strategy)
   - [Search Capabilities](#search-capabilities)
   - [Response Validation](#response-validation)
 - [Deployment Modes](#deployment-modes)
@@ -446,7 +444,7 @@ flybrowser recordings clean --older-than 30d
 
 ## ReAct Agent Architecture
 
-FlyBrowser uses the **ReAct (Reasoning + Acting)** pattern for intelligent browser automation with explicit thought-action-observation cycles.
+FlyBrowser uses the **ReAct (Reasoning + Acting)** pattern for intelligent browser automation with explicit thought-action-observation cycles. The reasoning loop is provided by [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai); FlyBrowser layers on browser-specific toolkits, memory, and middleware.
 
 ### Core ReAct Loop
 
@@ -513,25 +511,25 @@ BrowserAgent (browser_agent.py)
 
 ### Key Components
 
-**BrowserAgent** - Main automation agent
-- Built on `FireflyAgent` from fireflyframework-genai
-- Uses `ReActPattern` for multi-step reasoning
+**BrowserAgent** — Main automation agent
+- Thin wrapper over [`FireflyAgent`](https://github.com/fireflyframework/fireflyframework-genai) from fireflyframework-genai
+- Uses the framework's `ReActPattern` for multi-step reasoning
 - Methods: `act()`, `extract()`, `observe()`, `run_task()`, `agent_stream()`
 
-**6 ToolKits** - Browser tools organized by function
-- Built on `fireflyframework_genai.tools.toolkit.ToolKit`
+**6 ToolKits (32 tools)** — Browser tools organized by function
+- Built on `fireflyframework_genai.tools.toolkit.ToolKit` using the `@firefly_tool` decorator
 - Created via `create_all_toolkits()` and registered with `FireflyAgent`
 
-**BrowserMemoryManager** - Browser-specific state tracking
+**BrowserMemoryManager** — Browser-specific state tracking
 - Page snapshots, navigation graph, obstacle cache
 - Visited URL tracking, arbitrary facts
 - Formats state for LLM prompts
 
-**Middleware** - Cross-cutting concerns
+**Middleware** — Cross-cutting concerns
 - `ObstacleDetectionMiddleware`: Automatic popup/modal dismissal
 - `ScreenshotOnErrorMiddleware`: Debug screenshots on tool failures
 
-**SSE Streaming** - Real-time agent events
+**SSE Streaming** — Real-time agent events
 - `AgentStreamEvent` for typed events (thought, action, observation)
 - `format_sse_event()` for Server-Sent Events format
 
@@ -573,52 +571,23 @@ Phase 2: VLM Analysis + Dismissal (~2-5s)
 - Chat widgets and help dialogs
 - **JavaScript-triggered popups** that appear after page load
 
-### Reasoning Strategies
+### Reasoning Strategy
 
-The BrowserAgent supports multiple reasoning strategies:
+BrowserAgent uses the **ReAct** (Reasoning + Acting) loop provided by [`ReActPattern`](https://github.com/fireflyframework/fireflyframework-genai) from fireflyframework-genai. The framework manages the thought → action → observation cycle internally — FlyBrowser supplies the browser-specific tools and memory:
 
-**Standard ReAct**: Fast, single-path reasoning
 ```python
-browser = FlyBrowser(llm_provider="openai")
-result = await browser.act("click the login button")
-```
+# Simple actions use a single agent step
+await browser.act("click the login button")
 
-**Chain-of-Thought (CoT)**: Detailed step-by-step reasoning
-```python
-# Automatically selected for complex tasks
+# Complex autonomous tasks use the full ReAct loop with configurable iterations
 result = await browser.agent(
     task="Complete the multi-page checkout process",
-    context={"payment": "credit_card", "shipping": "express"}
-)
-```
-
-**Tree-of-Thoughts (ToT)**: Explore multiple solution paths
-```python
-# Used for ambiguous or high-stakes tasks
-result = await browser.extract(
-    query="Extract all product data",
-    schema={"type": "array", "items": {...}}
-)
-```
-
-### Task Planning
-
-**TaskPlanner** breaks down complex goals into phases:
-
-```python
-# Automatic planning for complex tasks
-result = await browser.agent(
-    task="Research competitors and extract pricing",
-    context={"industry": "SaaS", "competitors": 5},
+    context={"payment": "credit_card", "shipping": "express"},
     max_iterations=50
 )
-
-# Planner creates phases:
-# 1. Search phase: Find competitors
-# 2. Navigation phase: Visit pricing pages
-# 3. Extraction phase: Get pricing data
-# 4. Verification phase: Validate completeness
 ```
+
+The `ReActPattern` repeats until the agent calls `complete` (success) or `fail` (error), or until `max_iterations` / `max_time_seconds` is reached.
 
 ### Search Capabilities
 
@@ -1144,7 +1113,7 @@ curl -X DELETE http://localhost:8000/sessions/sess_abc123 \
 | [ReAct Framework](docs/architecture/react.md) | Reasoning and acting loop |
 | [Tools System](docs/architecture/tools.md) | Browser action tools |
 | [Memory Management](docs/architecture/memory.md) | Context and history |
-| [LLM Integration](docs/architecture/llm-integration.md) | Provider abstraction |
+| [LLM Integration](docs/architecture/llm-integration.md) | fireflyframework-genai provider delegation |
 
 ### Deployment
 | Mode | Description |
@@ -1193,7 +1162,7 @@ flybrowser> quit
 
 ## LLM Providers
 
-Works with any LLM:
+LLM orchestration is handled entirely by [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai). FlyBrowser passes the `llm_provider` and `llm_model` to the framework, which manages provider creation, API calls, retries, and streaming. Works with any LLM:
 
 ### OpenAI
 ```python
@@ -1282,7 +1251,7 @@ browser = FlyBrowser(
 
 # Via environment variables
 FLYBROWSER_LLM_PROVIDER=openai
-FLYBROWSER_LLM_MODEL=gpt-4
+FLYBROWSER_LLM_MODEL=gpt-4o
 FLYBROWSER_API_KEY=sk-...
 FLYBROWSER_HEADLESS=true
 FLYBROWSER_BROWSER_TYPE=chromium
@@ -1404,12 +1373,13 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ## Acknowledgments
 
-Built with these amazing projects:
+Built on top of:
 
-- [Playwright](https://playwright.dev/) - Rock-solid browser automation
-- [FastAPI](https://fastapi.tiangolo.com/) - Modern API framework
-- [FFmpeg](https://ffmpeg.org/) - Video encoding powerhouse
-- [OpenAI](https://openai.com/) & [Anthropic](https://anthropic.com/) - LLM intelligence
+- [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai) — Firefly's open-source agent framework (FireflyAgent, ReActPattern, ToolKit)
+- [Playwright](https://playwright.dev/) — Rock-solid browser automation
+- [Pydantic AI](https://ai.pydantic.dev/) — Type-safe LLM agent framework (used internally by fireflyframework-genai)
+- [FastAPI](https://fastapi.tiangolo.com/) — Modern API framework
+- [FFmpeg](https://ffmpeg.org/) — Video encoding powerhouse
 
 Inspired by [Stagehand](https://github.com/browserbase/stagehand).
 

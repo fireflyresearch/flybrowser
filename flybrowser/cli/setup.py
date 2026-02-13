@@ -366,7 +366,7 @@ def setup_wizard() -> Dict[str, Any]:
     # Select default provider
     provider = prompt_choice(
         "Select default LLM provider:",
-        ["OpenAI (GPT-4, GPT-3.5)", "Anthropic (Claude)", "Google (Gemini)", "Ollama (Local)", "Skip LLM setup"],
+        ["OpenAI (GPT-5.2, GPT-4o)", "Anthropic (Claude)", "Google (Gemini)", "Qwen (Alibaba Cloud)", "Ollama (Local)", "Skip LLM setup"],
         default=0,
     )
 
@@ -375,7 +375,7 @@ def setup_wizard() -> Dict[str, Any]:
         config["openai_api_key"] = prompt("OpenAI API Key", required=True)
         model = prompt_choice(
             "Select default OpenAI model:",
-            ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+            ["gpt-5.2", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
             default=0,
         )
         config["default_llm_model"] = model
@@ -385,7 +385,7 @@ def setup_wizard() -> Dict[str, Any]:
         config["anthropic_api_key"] = prompt("Anthropic API Key", required=True)
         model = prompt_choice(
             "Select default Anthropic model:",
-            ["claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307", "claude-3-opus-20240229"],
+            ["claude-sonnet-4-5-20250929", "claude-3-5-sonnet-20241022"],
             default=0,
         )
         config["default_llm_model"] = model
@@ -395,7 +395,17 @@ def setup_wizard() -> Dict[str, Any]:
         config["google_api_key"] = prompt("Google AI API Key", required=True)
         model = prompt_choice(
             "Select default Gemini model:",
-            ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+            ["gemini-2.0-flash", "gemini-1.5-pro"],
+            default=0,
+        )
+        config["default_llm_model"] = model
+
+    elif "Qwen" in provider:
+        config["default_llm_provider"] = "qwen"
+        config["qwen_api_key"] = prompt("DashScope API Key", required=True)
+        model = prompt_choice(
+            "Select default Qwen model:",
+            ["qwen-plus", "qwen-turbo", "qwen-max", "qwen-vl-max"],
             default=0,
         )
         config["default_llm_model"] = model

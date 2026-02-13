@@ -76,10 +76,10 @@ Choose models based on task complexity:
 
 | Task | Recommended Model | Speed |
 |------|-------------------|-------|
-| Simple extraction | gpt-4o-mini | Fast |
-| Complex reasoning | gpt-4o | Medium |
-| Vision tasks | gpt-4o | Medium |
-| Local/private | ollama (llama3) | Varies |
+| Simple extraction | gpt-5-mini | Fast |
+| Complex reasoning | gpt-5.2 / gpt-4o | Medium |
+| Vision tasks | gpt-4o / gemini-2.0-flash | Medium |
+| Local/private | ollama (qwen3:8b) | Varies |
 
 ### Temperature Settings
 

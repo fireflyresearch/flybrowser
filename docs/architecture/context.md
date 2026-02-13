@@ -568,6 +568,6 @@ await browser.act("Fill form")  # Works without context
 ## See Also
 
 - [SDK Reference](../reference/sdk.md) - SDK method signatures with context
-- [API Reference](../reference/api.md) - API endpoints with context
+- [REST API Reference](../reference/rest-api.md) - API endpoints with context
 - [Context Usage Guide](../guides/context-usage.md) - Practical examples
 - [Tool Development](./tools.md) - Creating context-aware tools

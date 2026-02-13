@@ -151,7 +151,7 @@ class BaseTool(ABC):
     def __init__(self, page_controller: Optional["PageController"] = None) -> None:
         """Initialize the tool with optional page controller."""
         self.page = page_controller
-        self._memory: Optional[Any] = None  # Set by tool registry
+        self._memory: Optional[Any] = None  # Set by ToolKit
     
     def set_memory(self, memory: Any) -> None:
         """Set memory reference for context access."""
