@@ -12,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""BrowserMemoryManager — browser-specific memory extensions."""
+"""BrowserMemoryManager -- browser-specific memory extensions.
+
+Delegates storage to :class:`fireflyframework_genai.memory.MemoryManager`
+while maintaining full backward compatibility with the original API.
+"""
 from __future__ import annotations
-from dataclasses import dataclass
+
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
+
+from fireflyframework_genai.memory import MemoryManager
+from fireflyframework_genai.memory.store import InMemoryStore
 
 
 @dataclass
@@ -33,12 +41,35 @@ class ObstacleInfo:
 
 
 class BrowserMemoryManager:
+    """Browser-specific memory manager backed by the framework MemoryManager.
+
+    All data is stored as key-value pairs in the framework's WorkingMemory,
+    enabling future migration to persistent backends (File, Postgres, MongoDB)
+    with zero code changes.  The public API is fully backward-compatible with
+    the original in-memory implementation.
+    """
+
     def __init__(self) -> None:
+        self._framework_memory = MemoryManager(store=InMemoryStore())
+        self._conversation_id: str = self._framework_memory.new_conversation()
+
+        # Local caches that mirror what is stored in working memory.
+        # We keep them so that properties return the exact same *object*
+        # types (PageSnapshot, ObstacleInfo) that callers already rely on.
         self._page_history: List[PageSnapshot] = []
         self._navigation_graph: Dict[str, List[str]] = {}
         self._obstacle_cache: Dict[str, ObstacleInfo] = {}
         self._visited_urls: set[str] = set()
         self._facts: Dict[str, Any] = {}
+
+    # -- Framework accessors -----------------------------------------------
+
+    @property
+    def conversation_id(self) -> str:
+        """The conversation ID for the current browser session."""
+        return self._conversation_id
+
+    # -- Backward-compatible properties ------------------------------------
 
     @property
     def page_history(self) -> List[PageSnapshot]:
@@ -52,16 +83,37 @@ class BrowserMemoryManager:
     def obstacle_cache(self) -> Dict[str, ObstacleInfo]:
         return self._obstacle_cache
 
+    # -- Mutators (update local cache + sync to framework) -----------------
+
+    def _sync_to_framework(self, key: str, value: Any) -> None:
+        """Persist a value in the framework's working memory."""
+        self._framework_memory.set_fact(key, value)
+
     def record_page_state(self, url: str, title: str, elements_summary: str) -> None:
-        self._page_history.append(PageSnapshot(url=url, title=title, elements_summary=elements_summary))
+        snapshot = PageSnapshot(url=url, title=title, elements_summary=elements_summary)
+        self._page_history.append(snapshot)
         self._visited_urls.add(url)
         self._facts["current_page"] = {"url": url, "title": title}
+
+        # Sync to framework working memory
+        self._sync_to_framework("page_history", [asdict(s) for s in self._page_history])
+        self._sync_to_framework("visited_urls", list(self._visited_urls))
+        self._sync_to_framework("current_page", self._facts["current_page"])
 
     def record_navigation(self, from_url: str, to_url: str, method: str) -> None:
         self._navigation_graph.setdefault(from_url, []).append(to_url)
 
+        # Sync to framework working memory
+        self._sync_to_framework("navigation_graph", self._navigation_graph)
+
     def record_obstacle(self, url: str, obstacle_type: str, resolution: str) -> None:
         self._obstacle_cache[url] = ObstacleInfo(obstacle_type=obstacle_type, resolution=resolution)
+
+        # Sync to framework working memory (store as plain dicts for serialisability)
+        self._sync_to_framework(
+            "obstacle_cache",
+            {k: asdict(v) for k, v in self._obstacle_cache.items()},
+        )
 
     def has_visited_url(self, url: str) -> bool:
         return url in self._visited_urls
@@ -71,6 +123,7 @@ class BrowserMemoryManager:
 
     def set_fact(self, key: str, value: Any) -> None:
         self._facts[key] = value
+        self._sync_to_framework(key, value)
 
     def get_fact(self, key: str, default: Any = None) -> Any:
         return self._facts.get(key, default)
@@ -88,6 +141,12 @@ class BrowserMemoryManager:
             parts.append("Recent history: " + " -> ".join(s.url.split("//")[-1][:40] for s in recent))
         if self._obstacle_cache:
             parts.append(f"Known obstacles: {', '.join(self._obstacle_cache.keys())}")
+
+        # Append framework working memory context
+        wm_context = self._framework_memory.get_working_context()
+        if wm_context:
+            parts.append(wm_context)
+
         return "\n".join(parts) if parts else "No browser memory recorded yet."
 
     def clear(self) -> None:
@@ -96,3 +155,8 @@ class BrowserMemoryManager:
         self._obstacle_cache.clear()
         self._visited_urls.clear()
         self._facts.clear()
+
+        # Clear framework working memory and start a fresh conversation
+        self._framework_memory.clear_working()
+        self._framework_memory.clear_conversation(self._conversation_id)
+        self._conversation_id = self._framework_memory.new_conversation()
