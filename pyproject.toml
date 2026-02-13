@@ -1,9 +1,9 @@
 [project]
 name = "flybrowser"
-version = "1.26.1"
+version = "26.02.01"
 description = "A browser automation and web scraping framework driven by LLM agents"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.13"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Firefly Software Solutions Inc", email = "info@flybrowser.dev"}
@@ -15,10 +15,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
     "playwright>=1.40.0",
@@ -47,9 +44,9 @@ dependencies = [
 [project.urls]
 Homepage = "https://flybrowser.dev"
 Documentation = "https://flybrowser.dev/docs"
-Repository = "https://github.com/fireflyresearch/flybrowsers"
-Issues = "https://github.com/fireflyresearch/flybrowsers/issues"
-Changelog = "https://github.com/fireflyresearch/flybrowsers/blob/main/CHANGELOG.md"
+Repository = "https://github.com/fireflyresearch/flybrowser"
+Issues = "https://github.com/fireflyresearch/flybrowser/issues"
+Changelog = "https://github.com/fireflyresearch/flybrowser/blob/main/CHANGELOG.md"
 
 [project.scripts]
 # Main unified CLI (recommended)
@@ -90,19 +87,22 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.black]
-line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312']
+line-length = 120
+target-version = ['py313']
 
 [tool.ruff]
-line-length = 100
-target-version = "py39"
+target-version = "py313"
+line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
 ignore = ["E501"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["flybrowser"]
+
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

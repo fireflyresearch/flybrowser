@@ -19,7 +19,7 @@ This package provides an easy-to-use SDK for browser automation powered by
 Large Language Models, enabling natural language interactions with web pages.
 """
 
-__version__ = "1.26.1"
+__version__ = "26.02.01"
 __author__ = "Firefly Software Solutions Inc"
 __license__ = "Apache-2.0"
 
