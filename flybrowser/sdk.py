@@ -101,6 +101,9 @@ class FlyBrowser:
         search_api_key: Optional[str] = None,
         stealth_config: Optional["StealthConfig"] = None,
         observability_config: Optional["ObservabilityConfig"] = None,
+        max_retries: int = 3,
+        retry_base_delay: float = 2.0,
+        rate_limit_max_delay: float = 60.0,
         **kwargs: Any,
     ) -> None:
         """
@@ -177,6 +180,12 @@ class FlyBrowser:
                 ...     enable_live_view=True,
                 ...     live_view_port=8765,
                 ... )
+            max_retries: Maximum retry attempts for rate-limited LLM calls (default: 3).
+                Set to 0 to disable automatic retries.
+            retry_base_delay: Initial backoff delay in seconds between retries (default: 2.0).
+                Actual delay uses exponential backoff with jitter.
+            rate_limit_max_delay: Maximum delay in seconds between rate limit retries (default: 60.0).
+                Caps the exponential backoff to prevent excessively long waits.
             **kwargs: Additional configuration options
 
         Example - Embedded Mode:
@@ -289,6 +298,15 @@ class FlyBrowser:
             logger.info(f"Observability config: logging={observability_config.enable_command_logging}, "
                        f"capture={observability_config.enable_source_capture}, "
                        f"live_view={observability_config.enable_live_view}")
+
+        # Store rate limit retry configuration
+        self._max_retries = max_retries
+        self._retry_base_delay = retry_base_delay
+        self._rate_limit_max_delay = rate_limit_max_delay
+
+        # Ensure framework-level quota/adaptive backoff is active
+        import os
+        os.environ.setdefault("FIREFLY_GENAI_QUOTA_ENABLED", "true")
 
         # Unified logging configuration based on log_verbosity
         # Maps verbosity to: (execution_verbosity, python_log_level, llm_logging_level)
@@ -579,6 +597,11 @@ class FlyBrowser:
             if self._agent_config
             else 50,
             session_id=self._session_id,
+            max_retries=self._max_retries,
+            retry_base_delay=self._retry_base_delay,
+            rate_limit_retries=self._max_retries,
+            rate_limit_base_delay=self._retry_base_delay,
+            rate_limit_max_delay=self._rate_limit_max_delay,
         )
         return BrowserAgent(
             page_controller=self.page_controller,
@@ -1469,8 +1492,180 @@ class FlyBrowser:
                 )
             return []
 
+    # ==================== Autonomous Mode ====================
+
+    async def auto(
+        self,
+        goal: str,
+        context: Optional[Dict[str, Any]] = None,
+        max_iterations: Optional[int] = None,
+        max_time_seconds: Optional[float] = None,
+        target_schema: Optional[Dict[str, Any]] = None,
+        max_pages: Optional[int] = None,
+        return_metadata: bool = True,
+    ) -> Union[Dict[str, Any], "AgentRequestResponse"]:
+        """
+        Run an autonomous task that decomposes a goal into sub-goals.
+
+        Suitable for complex, multi-step browser tasks where the agent plans
+        and executes sub-goals autonomously. Supports optional structured
+        output via target_schema for data extraction use cases.
+
+        Args:
+            goal: High-level goal to accomplish.
+            context: Optional context (form data, preferences, constraints).
+            max_iterations: Maximum action iterations.
+            max_time_seconds: Maximum execution time in seconds.
+            target_schema: Optional JSON schema for structured output.
+            max_pages: Maximum pages to navigate/scrape.
+            return_metadata: Return AgentRequestResponse with full metadata.
+
+        Returns:
+            Execution result with success, result_data, iterations, etc.
+
+        Example:
+            >>> result = await browser.auto(
+            ...     "Fill out the contact form",
+            ...     context={"name": "Jane Doe", "email": "jane@example.com"},
+            ... )
+            >>> print(result.data)
+        """
+        from flybrowser.agents.response import AgentRequestResponse, create_response
+
+        self._ensure_started()
+
+        if self._mode == "server":
+            data: Dict[str, Any] = {"goal": goal}
+            if context is not None:
+                data["context"] = context
+            if max_iterations is not None:
+                data["max_iterations"] = max_iterations
+            if max_time_seconds is not None:
+                data["max_time_seconds"] = max_time_seconds
+            if target_schema is not None:
+                data["target_schema"] = target_schema
+            if max_pages is not None:
+                data["max_pages"] = max_pages
+
+            response = await self._client._request(
+                "POST",
+                f"/sessions/{self._session_id}/auto",
+                json=data,
+            )
+            result = response or {}
+            if return_metadata:
+                return create_response(
+                    success=result.get("success", False),
+                    data=result.get("result_data"),
+                    error=result.get("error_message") or result.get("error"),
+                    operation="auto",
+                    query=goal,
+                    metadata=result,
+                )
+            return result
+
+        # Embedded mode: delegate to agent() with auto-specific context
+        agent_context = dict(context or {})
+        if target_schema:
+            agent_context["target_schema"] = target_schema
+        if max_pages:
+            agent_context["max_pages"] = max_pages
+
+        return await self.agent(
+            task=goal,
+            context=agent_context,
+            max_iterations=max_iterations or 50,
+            max_time_seconds=max_time_seconds or 1800.0,
+            return_metadata=return_metadata,
+        )
+
+    async def scrape(
+        self,
+        goal: str,
+        target_schema: Dict[str, Any],
+        validators: Optional[List[str]] = None,
+        max_pages: Optional[int] = None,
+        return_metadata: bool = True,
+    ) -> Union[Dict[str, Any], "AgentRequestResponse"]:
+        """
+        Scrape structured data from one or more pages.
+
+        Navigates pages, extracts data matching the target schema, and
+        optionally validates results against provided validators.
+
+        Args:
+            goal: Description of what to scrape.
+            target_schema: JSON schema defining the expected output structure.
+            validators: Optional list of validation rules to apply.
+            max_pages: Maximum number of pages to scrape.
+            return_metadata: Return AgentRequestResponse with full metadata.
+
+        Returns:
+            Scrape result with result_data, pages_scraped, validation_results.
+
+        Example:
+            >>> result = await browser.scrape(
+            ...     "Extract all products from this page",
+            ...     target_schema={
+            ...         "type": "array",
+            ...         "items": {
+            ...             "type": "object",
+            ...             "properties": {
+            ...                 "name": {"type": "string"},
+            ...                 "price": {"type": "number"},
+            ...             },
+            ...         },
+            ...     },
+            ...     max_pages=5,
+            ... )
+            >>> print(result.data)  # List of product dicts
+        """
+        from flybrowser.agents.response import AgentRequestResponse, create_response
+
+        self._ensure_started()
+
+        if self._mode == "server":
+            data: Dict[str, Any] = {"goal": goal, "target_schema": target_schema}
+            if validators is not None:
+                data["validators"] = validators
+            if max_pages is not None:
+                data["max_pages"] = max_pages
+
+            response = await self._client._request(
+                "POST",
+                f"/sessions/{self._session_id}/scrape",
+                json=data,
+            )
+            result = response or {}
+            if return_metadata:
+                return create_response(
+                    success=result.get("success", False),
+                    data=result.get("result_data"),
+                    error=result.get("error_message") or result.get("error"),
+                    operation="scrape",
+                    query=goal,
+                    metadata=result,
+                )
+            return result
+
+        # Embedded mode: delegate to agent() with scraping context
+        scrape_context: Dict[str, Any] = {
+            "target_schema": target_schema,
+            "operation": "scrape",
+        }
+        if validators:
+            scrape_context["validators"] = validators
+        if max_pages:
+            scrape_context["max_pages"] = max_pages
+
+        return await self.agent(
+            task=goal,
+            context=scrape_context,
+            return_metadata=return_metadata,
+        )
+
     # ==================== Batch Operations ====================
-    
+
     async def batch_execute(
         self,
         tasks: List[str],

@@ -25,6 +25,7 @@ from fireflyframework_genai.agents.builtin_middleware import (
     CostGuardMiddleware,
     ExplainabilityMiddleware,
     LoggingMiddleware,
+    RetryMiddleware,
 )
 from fireflyframework_genai.reasoning import (
     PlanAndExecutePattern,
@@ -52,6 +53,11 @@ class BrowserAgentConfig:
     budget_limit_usd: float = 5.0
     session_id: Optional[str] = None
     reasoning_strategy: ReasoningStrategy = ReasoningStrategy.REACT_STANDARD
+    max_retries: int = 3
+    retry_base_delay: float = 2.0
+    rate_limit_retries: int = 3
+    rate_limit_base_delay: float = 1.0
+    rate_limit_max_delay: float = 60.0
 
 
 _SYSTEM_INSTRUCTIONS = """You are a browser automation agent. You control a real web browser via tools.
@@ -91,6 +97,10 @@ class BrowserAgent:
         )
         self._memory = BrowserMemoryManager()
         self._middleware = [
+            RetryMiddleware(
+                max_retries=config.max_retries,
+                base_delay=config.retry_base_delay,
+            ),
             LoggingMiddleware(),
             CostGuardMiddleware(budget_usd=config.budget_limit_usd),
             ExplainabilityMiddleware(),

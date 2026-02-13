@@ -20,6 +20,7 @@ from fireflyframework_genai.agents.builtin_middleware import (
     CostGuardMiddleware,
     ExplainabilityMiddleware,
     LoggingMiddleware,
+    RetryMiddleware,
 )
 
 from flybrowser.agents.browser_agent import BrowserAgent, BrowserAgentConfig
@@ -57,14 +58,16 @@ class TestBrowserAgentFrameworkMiddleware:
         assert ScreenshotOnErrorMiddleware in types
 
     def test_middleware_order(self, mock_page_controller):
-        """Framework middleware must run before custom browser middleware."""
+        """RetryMiddleware runs first, then framework, then custom browser middleware."""
         agent = self._make_agent(mock_page_controller)
         types = [type(mw) for mw in agent._middleware]
 
         # Expected order:
-        # LoggingMiddleware -> CostGuardMiddleware -> ExplainabilityMiddleware
-        # -> ObstacleDetectionMiddleware -> ScreenshotOnErrorMiddleware
+        # RetryMiddleware -> LoggingMiddleware -> CostGuardMiddleware
+        # -> ExplainabilityMiddleware -> ObstacleDetectionMiddleware
+        # -> ScreenshotOnErrorMiddleware
         assert types == [
+            RetryMiddleware,
             LoggingMiddleware,
             CostGuardMiddleware,
             ExplainabilityMiddleware,
@@ -87,6 +90,6 @@ class TestBrowserAgentFrameworkMiddleware:
         assert cost_guards[0]._budget == 5.0
 
     def test_middleware_count(self, mock_page_controller):
-        """Total middleware count should be 5 (3 framework + 2 custom)."""
+        """Total middleware count should be 6 (1 retry + 3 framework + 2 custom)."""
         agent = self._make_agent(mock_page_controller)
-        assert len(agent._middleware) == 5
+        assert len(agent._middleware) == 6

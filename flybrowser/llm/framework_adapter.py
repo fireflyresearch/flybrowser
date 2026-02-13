@@ -87,13 +87,20 @@ class FrameworkLLMAdapter(BaseLLMProvider):
             self._model_str,
             system_prompt=system_prompt or "",
         )
-        result = await agent.run(prompt)
+        result = await self._execute_with_rate_limit_retry(
+            lambda: agent.run(prompt),
+            max_retries=3,
+            base_delay=2.0,
+            max_delay=60.0,
+        )
         text = result.output if hasattr(result, "output") else str(result.data)
-        return LLMResponse(
+        response = LLMResponse(
             content=text,
             model=self.model,
             usage=self._extract_usage(result),
         )
+        self._track_usage(response)
+        return response
 
     async def generate_with_vision(
         self,
@@ -119,13 +126,20 @@ class FrameworkLLMAdapter(BaseLLMProvider):
             elif isinstance(img, str):
                 parts.append(BinaryContent(data=base64.b64decode(img), media_type="image/png"))
 
-        result = await agent.run(parts)
+        result = await self._execute_with_rate_limit_retry(
+            lambda: agent.run(parts),
+            max_retries=3,
+            base_delay=2.0,
+            max_delay=60.0,
+        )
         text = result.output if hasattr(result, "output") else str(result.data)
-        return LLMResponse(
+        response = LLMResponse(
             content=text,
             model=self.model,
             usage=self._extract_usage(result),
         )
+        self._track_usage(response)
+        return response
 
     async def generate_structured(
         self,

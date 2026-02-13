@@ -186,24 +186,28 @@ class MockPage:
 
 class MockBrowser:
     """Mock Playwright browser for testing."""
-    
+
     def __init__(self):
         self.pages: List[MockPage] = []
         self._context = MagicMock()
-    
+
     async def new_page(self) -> MockPage:
         """Create new page."""
         page = MockPage()
         self.pages.append(page)
         return page
-    
-    async def new_context(self, **kwargs) -> MagicMock:
+
+    async def new_context(self, **kwargs) -> AsyncMock:
         """Create new context."""
-        context = MagicMock()
-        context.new_page = AsyncMock(return_value=MockPage())
+        mock_page = AsyncMock()
+        mock_page.set_content = AsyncMock()
+
+        context = AsyncMock()
+        context.new_page = AsyncMock(return_value=mock_page)
         context.close = AsyncMock()
+        context.add_init_script = AsyncMock()
         return context
-    
+
     async def close(self) -> None:
         """Close browser."""
         self.pages = []
