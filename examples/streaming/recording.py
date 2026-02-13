@@ -1,200 +1,230 @@
-"""
-Example: Content Recording
+# Copyright 2026 Firefly Software Solutions Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-Demonstrates recording browser sessions for tutorials, demos, or evidence.
-This matches the recording examples from the README.
+"""
+Example: Browser Session Recording
+
+Demonstrates recording browser sessions using FlyBrowser's recording API.
+Starts a recording (no parameters), navigates to real sites, performs
+interactions with act() and extract(), then stops the recording and
+inspects the result.
+
+NOTE: start_recording() takes NO arguments. stop_recording() returns
+a dict with session_id, screenshots, and duration_seconds.
 
 Prerequisites:
-- pip install flybrowser
-- export OPENAI_API_KEY="sk-..."
+    pip install flybrowser
+    export ANTHROPIC_API_KEY="sk-ant-..."
+
+Environment Variables:
+    ANTHROPIC_API_KEY          - Required. Your LLM provider API key.
+    FLYBROWSER_LLM_PROVIDER    - Optional. Defaults to "anthropic".
+    FLYBROWSER_LLM_MODEL       - Optional. Defaults to "claude-sonnet-4-5-20250929".
 """
 
 import asyncio
 import os
-from pathlib import Path
+import sys
+
 from flybrowser import FlyBrowser
 
 
-async def basic_recording_example():
-    """Basic recording of a browser session."""
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        # Navigate to page
+async def start_recording_safe(browser: FlyBrowser) -> dict | None:
+    """Start a recording session. Returns recording info or None on failure."""
+    try:
+        # start_recording() takes NO arguments
+        recording_info = await browser.start_recording()
+        print("  Recording started successfully.")
+        for key, value in recording_info.items():
+            print(f"    {key}: {value}")
+        return recording_info
+    except Exception as exc:
+        print(f"  WARNING: start_recording() failed: {exc}")
+        print("  Recording may not be supported in this environment.")
+        return None
+
+
+async def stop_recording_safe(browser: FlyBrowser) -> dict | None:
+    """Stop the recording and return session metadata."""
+    try:
+        recording_result = await browser.stop_recording()
+        print("  Recording stopped successfully.")
+        print("  Recording metadata:")
+        for key, value in recording_result.items():
+            if key == "screenshots" and isinstance(value, list):
+                print(f"    screenshots: {len(value)} captured")
+            else:
+                print(f"    {key}: {value}")
+        return recording_result
+    except Exception as exc:
+        print(f"  WARNING: stop_recording() failed: {exc}")
+        return None
+
+
+async def perform_recorded_actions(browser: FlyBrowser) -> list[dict]:
+    """Navigate and interact while recording. Returns a log of actions taken."""
+    action_log: list[dict] = []
+
+    # Action 1: Navigate to Hacker News
+    print("\n  [Action 1] Navigate to Hacker News")
+    try:
         await browser.goto("https://news.ycombinator.com")
-        
-        # Start recording
-        print("Starting recording...")
-        await browser.start_recording(codec="h265", quality="high")
-        
-        # Perform actions to record
-        await browser.act("scroll down slowly")
-        await asyncio.sleep(3)
-        
-        posts = await browser.extract("Get the top 5 post titles")
-        print(f"Extracted {len(posts.data)} posts")
-        
-        await browser.act("scroll down more")
-        await asyncio.sleep(3)
-        
-        # Stop recording
-        recording = await browser.stop_recording()
-        
-        print(f"\nRecording complete!")
-        print(f"  Recording ID: {recording['recording_id']}")
-        print(f"  Duration: {recording.get('duration_seconds', 'N/A')}s")
-        print(f"  File size: {recording.get('file_size_mb', 'N/A')} MB")
-
-
-async def tutorial_recording():
-    """Record a tutorial walkthrough."""
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=False,  # Show browser for tutorial
-    ) as browser:
-        # Start recording immediately
-        await browser.start_recording(
-            codec="h264",
-            quality="high",
-            include_audio=False
+        result = await browser.extract(
+            "What are the titles of the top 3 stories on the front page?"
         )
-        
-        print("Recording tutorial: How to search Hacker News")
-        
-        # Step 1: Navigate
-        await browser.goto("https://news.ycombinator.com")
-        await asyncio.sleep(2)
-        
-        # Step 2: Click search
-        await browser.act("click the search link at the top")
-        await asyncio.sleep(2)
-        
-        # Step 3: Search
-        await browser.act("type 'AI' in the search box and press Enter")
-        await asyncio.sleep(3)
-        
-        # Step 4: Review results
-        await browser.act("scroll through the search results")
-        await asyncio.sleep(3)
-        
-        # Stop recording
-        recording = await browser.stop_recording()
-        
-        print(f"\nTutorial recording saved!")
-        print(f"  ID: {recording['recording_id']}")
-        print(f"  Path: {recording.get('file_path', 'N/A')}")
+        if result.success:
+            print(f"    Extracted top stories: {str(result.data)[:150]}")
+            action_log.append({"action": "extract_hn_stories", "success": True})
+        else:
+            print(f"    Extraction failed: {result.error}")
+            action_log.append({"action": "extract_hn_stories", "success": False})
+    except Exception as exc:
+        print(f"    Error: {exc}")
+        action_log.append({"action": "extract_hn_stories", "success": False})
 
+    await asyncio.sleep(1)
 
-async def demo_with_checkpoints():
-    """Record a demo with pause/resume capability."""
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto("https://news.ycombinator.com")
-        
-        # Recording session 1
-        print("Recording Part 1: Browse front page")
-        await browser.start_recording(quality="medium")
-        
-        await browser.act("scroll down to see more stories")
-        await asyncio.sleep(3)
-        
-        recording1 = await browser.stop_recording()
-        print(f"  Part 1 saved: {recording1['recording_id']}")
-        
-        # Pause, then recording session 2
+    # Action 2: Scroll down
+    print("\n  [Action 2] Scroll Hacker News page")
+    try:
+        act_result = await browser.act("Scroll down to see more stories on the page.")
+        if act_result.success:
+            print("    Scrolled successfully.")
+            action_log.append({"action": "scroll_hn", "success": True})
+        else:
+            print(f"    Scroll failed: {act_result.error}")
+            action_log.append({"action": "scroll_hn", "success": False})
+    except Exception as exc:
+        print(f"    Error: {exc}")
+        action_log.append({"action": "scroll_hn", "success": False})
+
+    await asyncio.sleep(1)
+
+    # Action 3: Navigate to Wikipedia
+    print("\n  [Action 3] Navigate to Wikipedia")
+    try:
+        await browser.goto("https://en.wikipedia.org/wiki/Main_Page")
+        result = await browser.extract(
+            "What is the featured article title on the Wikipedia main page?"
+        )
+        if result.success:
+            print(f"    Featured article: {str(result.data)[:150]}")
+            action_log.append({"action": "extract_wikipedia", "success": True})
+        else:
+            print(f"    Extraction failed: {result.error}")
+            action_log.append({"action": "extract_wikipedia", "success": False})
+    except Exception as exc:
+        print(f"    Error: {exc}")
+        action_log.append({"action": "extract_wikipedia", "success": False})
+
+    await asyncio.sleep(1)
+
+    # Action 4: Click a link on Wikipedia
+    print("\n  [Action 4] Interact with Wikipedia")
+    try:
+        act_result = await browser.act(
+            "Click on the 'Featured article' link or the first article link visible."
+        )
+        if act_result.success:
+            print("    Clicked article link.")
+            action_log.append({"action": "click_wiki_article", "success": True})
+        else:
+            print(f"    Click failed: {act_result.error}")
+            action_log.append({"action": "click_wiki_article", "success": False})
+
         await asyncio.sleep(1)
-        
-        print("\nRecording Part 2: View comments")
-        await browser.start_recording(quality="medium")
-        
-        await browser.act("click on the first story's comment link")
-        await asyncio.sleep(2)
-        
-        await browser.act("scroll through the comments")
-        await asyncio.sleep(3)
-        
-        recording2 = await browser.stop_recording()
-        print(f"  Part 2 saved: {recording2['recording_id']}")
-        
-        return [recording1, recording2]
+
+        verify = await browser.extract("What is the title of the article I am now viewing?")
+        if verify.success:
+            print(f"    Now viewing: {str(verify.data)[:120]}")
+            verify.pprint()
+    except Exception as exc:
+        print(f"    Error: {exc}")
+        action_log.append({"action": "click_wiki_article", "success": False})
+
+    # Action 5: Navigate to books.toscrape.com
+    print("\n  [Action 5] Navigate to Books to Scrape")
+    try:
+        await browser.goto("https://books.toscrape.com")
+        result = await browser.extract("How many books are shown on the front page?")
+        if result.success:
+            print(f"    Books visible: {str(result.data)[:120]}")
+            action_log.append({"action": "extract_books", "success": True})
+        else:
+            print(f"    Extraction failed: {result.error}")
+            action_log.append({"action": "extract_books", "success": False})
+    except Exception as exc:
+        print(f"    Error: {exc}")
+        action_log.append({"action": "extract_books", "success": False})
+
+    return action_log
 
 
-async def recording_with_extraction():
-    """Record while extracting data."""
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        # Start recording
-        await browser.start_recording(
-            codec="h265",  # Better compression
-            quality="medium"
-        )
-        
-        print("Recording + Data Extraction Demo")
-        
-        # Navigate
-        await browser.goto("https://news.ycombinator.com")
-        await asyncio.sleep(2)
-        
-        # Extract while recording
-        stories = await browser.extract(
-            "Get all story titles and scores",
-            schema={
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "score": {"type": "integer"}
-                    }
-                }
-            }
-        )
-        
-        print(f"Extracted {len(stories.data)} stories while recording")
-        
-        # Continue recording
-        await browser.act("scroll down")
-        await asyncio.sleep(2)
-        
-        # Stop recording
-        recording = await browser.stop_recording()
-        
-        print(f"\nRecording: {recording['recording_id']}")
-        print(f"Data extracted: {len(stories.data)} items")
-        
-        return {
-            "recording": recording,
-            "data": stories.data
-        }
+async def demo_recording() -> None:
+    """Full recording demonstration."""
+    provider = os.getenv("FLYBROWSER_LLM_PROVIDER", "anthropic")
+    model = os.getenv("FLYBROWSER_LLM_MODEL", "claude-sonnet-4-5-20250929")
 
+    if not os.getenv("ANTHROPIC_API_KEY") and provider == "anthropic":
+        print("ERROR: ANTHROPIC_API_KEY environment variable is not set.")
+        sys.exit(1)
 
-async def main():
-    """Main entry point."""
-    print("=" * 60)
-    print("Recording Examples")
-    print("=" * 60)
-    
-    print("\n--- Basic Recording ---")
-    await basic_recording_example()
-    
-    print("\n--- Tutorial Recording ---")
-    await tutorial_recording()
-    
-    print("\n--- Recording with Checkpoints ---")
-    await demo_with_checkpoints()
-    
-    print("\n--- Recording + Extraction ---")
-    await recording_with_extraction()
+    print("=" * 65)
+    print("  FlyBrowser Recording Demo")
+    print(f"  Provider: {provider}  |  Model: {model}")
+    print("=" * 65)
+
+    recording_active = False
+
+    async with FlyBrowser(llm_provider=provider, llm_model=model, headless=True) as browser:
+        # Phase 1: Start recording
+        print("\n[Phase 1] Starting recording")
+        recording_info = await start_recording_safe(browser)
+        recording_active = recording_info is not None
+
+        # Phase 2: Perform actions while recording
+        print("\n[Phase 2] Performing recorded actions")
+        action_log = await perform_recorded_actions(browser)
+
+        # Phase 3: Stop recording
+        if recording_active:
+            print("\n[Phase 3] Stopping recording")
+            recording_result = await stop_recording_safe(browser)
+
+            if recording_result:
+                session_id = recording_result.get("session_id", "N/A")
+                screenshots = recording_result.get("screenshots", [])
+                duration = recording_result.get("duration_seconds", "N/A")
+                print(f"\n  Session ID      : {session_id}")
+                print(f"  Screenshots     : {len(screenshots) if isinstance(screenshots, list) else screenshots}")
+                print(f"  Duration (sec)  : {duration}")
+        else:
+            print("\n[Phase 3] Skipping stop (recording was not started)")
+
+        # Summary
+        successful_actions = sum(1 for a in action_log if a.get("success"))
+        total_actions = len(action_log)
+        print(f"\n  Actions performed: {total_actions}")
+        print(f"  Successful       : {successful_actions}")
+        print(f"  Failed           : {total_actions - successful_actions}")
+
+        # Usage summary
+        usage = browser.get_usage_summary()
+        print(f"  LLM Usage        : {usage}")
+
+    print("\n  Recording demo complete.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(demo_recording())

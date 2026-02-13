@@ -1,213 +1,179 @@
+# Copyright 2026 Firefly Software Solutions Inc
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
-Example: Job Application Form Automation
+Job Search Workflow
+===================
 
-Demonstrates autonomous form filling and submission for job applications.
-This matches the "Form Automation" example from the README Autonomous Mode section.
+Navigates to Hacker News "Who is Hiring?" threads, extracts job listings,
+filters them by criteria (remote, language, seniority), and produces a
+curated shortlist.  Demonstrates agent-driven navigation, act for
+interaction, extract for data pulling, observe for verification, and
+detailed execution / LLM usage reporting.
 
-Prerequisites:
-- pip install flybrowser
-- export OPENAI_API_KEY="sk-..."
+Environment variables:
+    ANTHROPIC_API_KEY          - API key for the configured LLM provider
+    FLYBROWSER_LLM_PROVIDER   - LLM provider (default: "anthropic")
+    FLYBROWSER_LLM_MODEL      - LLM model   (default: "claude-sonnet-4-5-20250929")
 """
 
 import asyncio
+import json
 import os
+from datetime import datetime, timezone
+
 from flybrowser import FlyBrowser
 
 
-async def fill_job_application(
-    application_url: str,
-    applicant_data: dict,
-    max_iterations: int = 30,
-    max_time_seconds: int = 300
-):
-    """
-    Fill out and submit a job application form autonomously.
-    
-    Args:
-        application_url: URL of the job application form
-        applicant_data: Dictionary with applicant information
-        max_iterations: Maximum agent iterations
-        max_time_seconds: Maximum time allowed
-        
-    Returns:
-        Result of the application submission
-    """
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-    ) as browser:
-        await browser.goto(application_url)
-        
-        # Use agent for complex multi-step form filling
-        result = await browser.agent(
-            task="Fill out and submit the job application",
-            context={
-                "name": applicant_data.get("name"),
-                "email": applicant_data.get("email"),
-                "phone": applicant_data.get("phone"),
-                "position": applicant_data.get("position"),
-                "experience_years": applicant_data.get("experience_years"),
-                "cover_letter": applicant_data.get("cover_letter"),
-                "resume_uploaded": applicant_data.get("resume_path") is not None
-            },
-            max_iterations=max_iterations,
-            max_time_seconds=max_time_seconds
-        )
-        
-        if result.success:
-            print(f"Application submitted! Confirmation: {result.data}")
-            result.pprint()  # Pretty-print execution summary and LLM usage
-            return result
-        else:
-            print(f"Failed: {result.error}")
-            return result
+HN_JOBS_URL = "https://news.ycombinator.com/jobs"
+
+FILTER_CRITERIA = {
+    "keywords": ["Python", "backend", "remote"],
+    "exclude": ["crypto", "blockchain"],
+    "seniority": "senior",
+}
 
 
-async def simple_contact_form():
-    """Fill a simple contact form (simpler example)."""
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-    ) as browser:
-        # Using example.com as placeholder
-        await browser.goto("https://example.com/contact")
-        
-        # Autonomous form filling
-        result = await browser.agent(
-            task="Fill out and submit the contact form",
-            context={
-                "name": "John Smith",
-                "email": "john@example.com",
-                "subject": "Product Inquiry",
-                "message": "I am interested in learning more about your enterprise solutions."
-            },
-            max_iterations=20
-        )
-        
-        if result.success:
-            print("Form submitted successfully!")
-            print(f"Confirmation: {result.data}")
-            print(f"Duration: {result.execution.duration_seconds:.1f}s")
-            print(f"LLM Cost: ${result.llm_usage.cost_usd:.4f}")
-        
-        return result
+async def navigate_to_jobs(browser: FlyBrowser) -> bool:
+    """Navigate to the Hacker News jobs page."""
+    print("  Navigating to HN Jobs...")
+    await browser.goto(HN_JOBS_URL)
+
+    obs = await browser.observe("Is this the Hacker News jobs listing page?")
+    if obs.success:
+        print(f"    Page confirmed ({obs.llm_usage.total_tokens} tokens)")
+        return True
+
+    print(f"    Could not verify page: {obs.error}")
+    return False
 
 
-async def multi_page_application():
-    """Handle multi-page application form."""
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        log_verbosity="verbose",
-    ) as browser:
-        await browser.goto("https://jobs.example.com/apply/senior-engineer")
-        
-        # Agent will navigate through multiple pages automatically
-        result = await browser.agent(
-            task="""
-            Complete the multi-page job application:
-            1. Fill personal information
-            2. Add work experience
-            3. Upload resume
-            4. Answer screening questions
-            5. Submit application
-            """,
-            context={
-                "name": "Jane Smith",
-                "email": "jane@example.com",
-                "phone": "555-123-4567",
-                "position": "Senior Engineer",
-                "experience_years": 5,
-                "current_company": "Tech Corp",
-                "linkedin": "linkedin.com/in/janesmith",
-                "github": "github.com/janesmith",
-                "cover_letter": "I am excited to apply for this position...",
-                "willing_to_relocate": True,
-                "expected_salary": "$150,000"
-            },
-            max_iterations=50,
-            max_time_seconds=600
-        )
-        
-        if result.success:
-            print("\n=== Application Complete ===")
-            print(f"Submission confirmed: {result.data}")
-            print(f"\nExecution Summary:")
-            print(f"  Total iterations: {result.execution.iterations}")
-            print(f"  Duration: {result.execution.duration_seconds:.1f}s")
-            print(f"  Actions taken: {len(result.execution.actions_taken)}")
-            print(f"\nLLM Usage:")
-            print(f"  Total tokens: {result.llm_usage.total_tokens:,}")
-            print(f"  Cost: ${result.llm_usage.cost_usd:.4f}")
-        
-        return result
-
-
-async def application_with_file_upload():
-    """Handle application with resume upload."""
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-    ) as browser:
-        await browser.goto("https://careers.example.com/apply")
-        
-        # Note: For file uploads, pre-upload the file to a location the browser can access
-        resume_path = "/path/to/resume.pdf"
-        
-        # Manual file upload first (if needed)
-        if os.path.exists(resume_path):
-            await browser.act(f"Upload the file at {resume_path} to the resume field")
-        
-        # Then let agent handle the rest
-        result = await browser.agent(
-            task="Complete the job application form and submit",
-            context={
-                "name": "John Doe",
-                "email": "john@example.com",
-                "phone": "555-987-6543",
-                "position": "Software Engineer",
-                "resume_uploaded": True,  # Signal that resume is already uploaded
-                "years_experience": 3,
-                "education": "BS Computer Science",
-                "cover_letter": "I am passionate about building great software..."
-            },
-            max_iterations=30
-        )
-        
-        return result
-
-
-async def main():
-    """Main entry point for job application examples."""
-    print("=" * 60)
-    print("Job Application Form Automation Examples")
-    print("=" * 60)
-    
-    # Example 1: Simple contact form
-    print("\n--- Example 1: Simple Contact Form ---")
-    await simple_contact_form()
-    
-    # Example 2: Full job application (using example URLs)
-    print("\n--- Example 2: Job Application Form ---")
-    result = await fill_job_application(
-        application_url="https://jobs.example.com/apply",
-        applicant_data={
-            "name": "Jane Smith",
-            "email": "jane@example.com",
-            "phone": "555-123-4567",
-            "position": "Senior Engineer",
-            "experience_years": 5,
-            "cover_letter": "I am excited to apply for this position because..."
-        }
+async def extract_job_listings(browser: FlyBrowser) -> list[dict]:
+    """Extract job listings from the current page."""
+    print("  Extracting job listings...")
+    result = await browser.extract(
+        "Extract up to 15 job listings from this page. For each listing "
+        "include: title, company name, location (or 'Remote' if remote), "
+        "and the URL if visible. If any tags like language requirements "
+        "or seniority are mentioned, include those too."
     )
-    
-    # Print summary
-    if result and result.success:
-        print("\n=== Application Summary ===")
-        print(f"Success: {result.success}")
-        print(f"Data: {result.data}")
-        print(f"Iterations: {result.execution.iterations}")
-        print(f"Duration: {result.execution.duration_seconds:.1f}s")
+
+    if result.success:
+        print(f"    Extracted ({result.llm_usage.total_tokens} tokens, "
+              f"{result.execution.duration_seconds:.1f}s)")
+        result.pprint()
+        return result.data if isinstance(result.data, list) else [result.data]
+
+    print(f"    Extraction failed: {result.error}")
+    return []
+
+
+def filter_jobs(listings: list[dict], criteria: dict) -> list[dict]:
+    """
+    Filter job listings against user-defined criteria.
+    A listing matches if it contains at least one keyword and none of the
+    exclusion terms (case-insensitive check across all string values).
+    """
+    keywords = [kw.lower() for kw in criteria.get("keywords", [])]
+    excludes = [ex.lower() for ex in criteria.get("exclude", [])]
+
+    matched: list[dict] = []
+    for job in listings:
+        if not isinstance(job, dict):
+            continue
+        blob = " ".join(str(v) for v in job.values()).lower()
+
+        has_keyword = any(kw in blob for kw in keywords) if keywords else True
+        has_exclude = any(ex in blob for ex in excludes)
+
+        if has_keyword and not has_exclude:
+            matched.append(job)
+
+    return matched
+
+
+def print_job_report(all_jobs: list[dict], filtered: list[dict]) -> None:
+    """Print a formatted job search report."""
+    print("\n" + "=" * 64)
+    print("JOB SEARCH REPORT")
+    print(f"Source: Hacker News Jobs")
+    print(f"Keywords: {', '.join(FILTER_CRITERIA['keywords'])}")
+    print(f"Exclude:  {', '.join(FILTER_CRITERIA['exclude'])}")
+    print(f"Generated: {datetime.now(timezone.utc).isoformat()}")
+    print("=" * 64)
+
+    print(f"\n  Total listings found: {len(all_jobs)}")
+    print(f"  Matching criteria:    {len(filtered)}")
+
+    if filtered:
+        print("\n  --- Matching Jobs ---")
+        for i, job in enumerate(filtered, start=1):
+            title = job.get("title", "Untitled")
+            company = job.get("company") or job.get("company_name") or "Unknown"
+            location = job.get("location", "N/A")
+            print(f"\n  {i}. {title}")
+            print(f"     Company:  {company}")
+            print(f"     Location: {location}")
+    else:
+        print("\n  No jobs matched the filter criteria.")
+
+    print("\n" + "=" * 64)
+
+
+async def main() -> None:
+    """Run the job search workflow."""
+    provider = os.getenv("FLYBROWSER_LLM_PROVIDER", "anthropic")
+    model = os.getenv("FLYBROWSER_LLM_MODEL", "claude-sonnet-4-5-20250929")
+
+    print("=" * 64)
+    print("Job Search Workflow")
+    print(f"Provider: {provider}  |  Model: {model}")
+    print("=" * 64)
+
+    all_jobs: list[dict] = []
+
+    async with FlyBrowser(llm_provider=provider, llm_model=model, headless=True) as browser:
+        if not await navigate_to_jobs(browser):
+            print("Failed to reach jobs page -- aborting.")
+            return
+
+        all_jobs = await extract_job_listings(browser)
+
+        # Screenshot for audit trail
+        screenshot = await browser.screenshot()
+        print(f"  Screenshot: {len(screenshot.get('data_base64', ''))} bytes")
+
+        usage = browser.get_usage_summary()
+
+    # Apply filters
+    filtered = filter_jobs(all_jobs, FILTER_CRITERIA)
+    print_job_report(all_jobs, filtered)
+
+    # Persist results
+    output = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source": HN_JOBS_URL,
+        "criteria": FILTER_CRITERIA,
+        "total_tokens": usage.get("total_tokens", 0),
+        "all_listings": all_jobs,
+        "filtered_listings": filtered,
+    }
+    filename = f"job_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(filename, "w") as fh:
+        json.dump(output, fh, indent=2, default=str)
+    print(f"\nResults saved to: {filename}")
+    print(f"Total LLM tokens: {usage.get('total_tokens', 0)}")
 
 
 if __name__ == "__main__":

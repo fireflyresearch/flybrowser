@@ -1,254 +1,215 @@
-"""
-Example: Product Data Extraction
+# Copyright 2026 Firefly Software Solutions Inc
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-Demonstrates structured extraction using JSON schemas for e-commerce data.
-Shows both single product and product listing extraction patterns.
+"""
+E-Commerce Product Extraction with Structured Schemas
+
+Demonstrates three real-world extraction patterns against books.toscrape.com,
+a freely available practice e-commerce site:
+
+  1. Catalog extraction  - Pull every book on a category page with price,
+                           rating, and availability.
+  2. Product detail      - Navigate into an individual product page and
+                           extract full metadata (description, UPC, tax, etc.).
+  3. Category analysis   - Classify the catalog by price tier and star rating,
+                           producing a summary useful for pricing analytics.
+
+Business value:
+  - Inventory monitoring: detect new products or stock-outs across competitors.
+  - Pricing intelligence: feed structured product data into a BI dashboard.
+  - Content enrichment: populate product databases from public catalogs.
 
 Prerequisites:
-- pip install flybrowser
-- export OPENAI_API_KEY="sk-..."
+    export ANTHROPIC_API_KEY="sk-ant-..."
+    export FLYBROWSER_LLM_PROVIDER="anthropic"     # optional
+    export FLYBROWSER_LLM_MODEL="claude-sonnet-4-5-20250929"  # optional
 """
 
 import asyncio
 import json
 import os
+
 from flybrowser import FlyBrowser
 
-# Schema for single product extraction
-PRODUCT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "name": {"type": "string"},
-        "price": {"type": "string"},
-        "rating": {"type": "number"},
-        "reviews_count": {"type": "integer"},
-        "in_stock": {"type": "boolean"},
-        "description": {"type": "string"}
-    },
-    "required": ["name", "price"]
-}
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+PROVIDER = os.getenv("FLYBROWSER_LLM_PROVIDER", "anthropic")
+MODEL = os.getenv("FLYBROWSER_LLM_MODEL", "claude-sonnet-4-5-20250929")
 
-# Schema for product listing extraction
-PRODUCT_LIST_SCHEMA = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "price": {"type": "string"},
-            "rating": {"type": "number"},
-            "url": {"type": "string"}
-        }
-    }
-}
+CATALOG_URL = "https://books.toscrape.com"
+CATEGORY_URL = "https://books.toscrape.com/catalogue/category/books/mystery_3/index.html"
 
 
-async def extract_single_product(url: str):
+def section(title: str) -> None:
+    """Print a visible section header."""
+    print(f"\n{'=' * 70}")
+    print(f"  {title}")
+    print(f"{'=' * 70}")
+
+
+# ---------------------------------------------------------------------------
+# 1. Catalog extraction - all books on a listing page
+# ---------------------------------------------------------------------------
+async def extract_catalog(browser: FlyBrowser, url: str) -> list[dict]:
     """
-    Extract detailed information from a single product page.
-    
-    Args:
-        url: Product page URL
-        
-    Returns:
-        Product dictionary
+    Extract every book shown on a catalog/category page.
+
+    Returns a list of dicts, each with: title, price, rating, availability.
     """
+    await browser.goto(url)
+    print(f"  Navigated to {url}")
+
+    result = await browser.extract(
+        "Extract every book shown on this page. For each book return: "
+        "title (string), price (string including currency symbol), "
+        "star_rating (integer 1-5), and in_stock (boolean)."
+    )
+
+    if not result.success:
+        print(f"  Extraction failed: {result.error}")
+        return []
+
+    books = result.data if isinstance(result.data, list) else [result.data]
+    print(f"  Extracted {len(books)} books "
+          f"({result.llm_usage.total_tokens:,} tokens, "
+          f"{result.execution.duration_seconds:.1f}s)")
+    return books
+
+
+# ---------------------------------------------------------------------------
+# 2. Product detail extraction from an individual book page
+# ---------------------------------------------------------------------------
+async def extract_product_detail(browser: FlyBrowser, book_title: str) -> dict | None:
+    """
+    Click into a book and extract its full detail page.
+
+    Returns a dict with: title, price, description, upc, availability,
+    num_reviews, tax, and category.
+    """
+    # Navigate into the book
+    nav = await browser.act(
+        f"Click the link for the book titled '{book_title}'"
+    )
+    if not nav.success:
+        print(f"  Could not navigate to '{book_title}': {nav.error}")
+        return None
+
+    result = await browser.extract(
+        "Extract the full product information from this book detail page: "
+        "title, price (with currency), star_rating (1-5), description "
+        "(the paragraph below the title), UPC code, availability text, "
+        "number_of_reviews, tax amount, and product category."
+    )
+
+    if not result.success:
+        print(f"  Detail extraction failed: {result.error}")
+        return None
+
+    print(f"  Detail extracted ({result.llm_usage.total_tokens:,} tokens)")
+    return result.data
+
+
+# ---------------------------------------------------------------------------
+# 3. Category analysis - classify books by price tier and rating
+# ---------------------------------------------------------------------------
+async def analyze_catalog(browser: FlyBrowser, url: str) -> dict | None:
+    """
+    Ask the agent to analyze the catalog and produce a pricing summary.
+
+    Returns a structured summary with price tiers and rating distribution.
+    """
+    await browser.goto(url)
+
+    result = await browser.extract(
+        "Analyze all books on this page and produce a summary: "
+        "1) total_books (int), "
+        "2) price_range with min_price and max_price (strings), "
+        "3) average_price (float), "
+        "4) rating_distribution: how many books have 1, 2, 3, 4, and 5 stars, "
+        "5) most_expensive_book title and price, "
+        "6) cheapest_book title and price."
+    )
+
+    if not result.success:
+        print(f"  Analysis failed: {result.error}")
+        return None
+
+    print(f"  Analysis complete ({result.llm_usage.total_tokens:,} tokens)")
+    return result.data
+
+
+# ---------------------------------------------------------------------------
+# Main orchestration
+# ---------------------------------------------------------------------------
+async def main() -> None:
+    """Run all three extraction patterns in a single browser session."""
+
+    print(f"Product Extraction | Provider: {PROVIDER} | Model: {MODEL}")
+
     async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
+        llm_provider=PROVIDER,
+        llm_model=MODEL,
         headless=True,
     ) as browser:
-        await browser.goto(url)
-        
-        # Extract with schema
-        result = await browser.extract(
-            "Extract the product information from this page",
-            schema=PRODUCT_SCHEMA
-        )
-        
-        if result.success:
-            print("Product Information:")
-            print(json.dumps(result.data, indent=2))
-            return result.data
-        else:
-            print(f"Extraction failed: {result.error}")
-            return None
 
+        # --- Pattern 1: Catalog listing extraction ---
+        section("1/3  Catalog Extraction - Mystery Category")
+        books = await extract_catalog(browser, CATEGORY_URL)
 
-async def extract_product_listing(url: str):
-    """
-    Extract products from a category or search results page.
-    
-    Args:
-        url: Category or search results URL
-        
-    Returns:
-        List of product dictionaries
-    """
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(url)
-        
-        # Extract all products on page
-        result = await browser.extract(
-            "Extract all product names, prices, ratings, and URLs from this page",
-            schema=PRODUCT_LIST_SCHEMA
-        )
-        
-        if result.success:
-            products = result.data
-            print(f"Found {len(products)} products:")
-            
-            # Display formatted results
-            print(f"\n{'Name':<40} {'Price':<12} {'Rating':<8}")
-            print("-" * 60)
-            for product in products[:10]:  # Show first 10
-                name = product.get('name', 'Unknown')[:38]
-                price = product.get('price', 'N/A')[:10]
-                rating = product.get('rating', 'N/A')
-                print(f"{name:<40} {price:<12} {rating}")
-            
-            return products
-        else:
-            print(f"Extraction failed: {result.error}")
-            return []
+        if books:
+            print(f"\n  {'Title':<45} {'Price':<10} {'Rating':<8} {'Stock'}")
+            print(f"  {'-'*45} {'-'*10} {'-'*8} {'-'*6}")
+            for book in books[:10]:
+                if not isinstance(book, dict):
+                    continue
+                title = str(book.get("title", ""))[:43]
+                price = str(book.get("price", "N/A"))[:10]
+                rating = book.get("star_rating", "?")
+                stock = "Yes" if book.get("in_stock") else "No"
+                print(f"  {title:<45} {price:<10} {rating:<8} {stock}")
+            if len(books) > 10:
+                print(f"  ... and {len(books) - 10} more books")
 
+        # --- Pattern 2: Product detail drill-down ---
+        section("2/3  Product Detail Extraction")
+        if books and isinstance(books[0], dict):
+            first_title = books[0].get("title", "")
+            if first_title:
+                detail = await extract_product_detail(browser, first_title)
+                if detail:
+                    print("\n  Full product detail:")
+                    print(f"  {json.dumps(detail, indent=4, default=str)}")
 
-async def extract_table_data(url: str, table_description: str):
-    """
-    Extract tabular data from a page.
-    
-    Args:
-        url: Page URL containing table
-        table_description: Description of the table to extract
-        
-    Returns:
-        List of row dictionaries
-    """
-    # Schema for stock market table (example)
-    TABLE_SCHEMA = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "company": {"type": "string"},
-                "symbol": {"type": "string"},
-                "price": {"type": "string"},
-                "change": {"type": "string"},
-                "volume": {"type": "string"}
-            }
-        }
-    }
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(url)
-        
-        result = await browser.extract(
-            f"Extract the {table_description} table with all columns",
-            schema=TABLE_SCHEMA
-        )
-        
-        if result.success:
-            return result.data
-        else:
-            print(f"Extraction failed: {result.error}")
-            return []
+            # Navigate back to continue
+            await browser.goto(CATEGORY_URL)
 
+        # --- Pattern 3: Category-level analysis ---
+        section("3/3  Category Analysis - Pricing Intelligence")
+        analysis = await analyze_catalog(browser, CATEGORY_URL)
+        if analysis:
+            print("\n  Catalog analysis:")
+            print(f"  {json.dumps(analysis, indent=4, default=str)}")
 
-async def conditional_extraction(url: str):
-    """
-    Adapt extraction strategy based on page type.
-    
-    Args:
-        url: Any URL to analyze and extract
-        
-    Returns:
-        Extracted data based on page type
-    """
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(url)
-        
-        # First, identify the page type
-        page_info = await browser.extract(
-            "What type of page is this? (product, article, listing, profile, other)"
-        )
-        
-        page_type = page_info.data.lower() if page_info.success else "unknown"
-        print(f"Detected page type: {page_type}")
-        
-        # Extract based on page type
-        if "product" in page_type:
-            result = await browser.extract(
-                "Extract product name, price, description, and specifications",
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "price": {"type": "string"},
-                        "description": {"type": "string"},
-                        "specs": {"type": "object"}
-                    }
-                }
-            )
-        elif "article" in page_type:
-            result = await browser.extract(
-                "Extract article title, author, publish date, and main content",
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "author": {"type": "string"},
-                        "date": {"type": "string"},
-                        "content": {"type": "string"}
-                    }
-                }
-            )
-        elif "listing" in page_type:
-            result = await browser.extract(
-                "Extract all items with their names and prices",
-                schema={
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "price": {"type": "string"}
-                        }
-                    }
-                }
-            )
-        else:
-            result = await browser.extract(
-                "Extract the main content and key information from this page"
-            )
-        
-        return result.data if result.success else None
+        # --- Session usage ---
+        section("Session Usage")
+        usage = browser.get_usage_summary()
+        print(f"  Total tokens : {usage.get('total_tokens', 0):,}")
+        print(f"  API calls    : {usage.get('calls_count', 0)}")
+        print(f"  Est. cost    : ${usage.get('cost_usd', 0):.4f}")
 
-
-async def main():
-    """Main entry point demonstrating various extraction patterns."""
-    print("=" * 60)
-    print("Product Data Extraction Examples")
-    print("=" * 60)
-    
-    # Example 1: Extract from a product listing page
-    print("\n--- Example 1: Product Listing Extraction ---")
-    # Using example.com as placeholder - replace with actual URL
-    await extract_product_listing("https://news.ycombinator.com")
-    
-    print("\n--- Example 2: Conditional Extraction ---")
-    await conditional_extraction("https://news.ycombinator.com")
+    print("\nProduct extraction complete.")
 
 
 if __name__ == "__main__":

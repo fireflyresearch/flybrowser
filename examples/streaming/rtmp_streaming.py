@@ -1,174 +1,236 @@
-"""
-Example: RTMP Streaming to Twitch/YouTube
+# Copyright 2026 Firefly Software Solutions Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-Demonstrates streaming browser sessions to Twitch, YouTube, or other RTMP platforms.
+"""
+Example: RTMP Streaming Concept
+
+Demonstrates the concept of RTMP streaming (e.g., to Twitch or YouTube)
+using FlyBrowser's streaming API. Since RTMP requires external infrastructure
+and stream keys, this example focuses on graceful handling: attempting to
+start a stream, navigating and interacting, monitoring status, and stopping.
+
+All streaming calls are wrapped in try/except because RTMP streaming may
+not be available in headless mode or without proper infrastructure.
 
 Prerequisites:
-- pip install flybrowser
-- export OPENAI_API_KEY="sk-..."
-- export TWITCH_STREAM_KEY="live_..." (or YOUTUBE_STREAM_KEY)
+    pip install flybrowser
+    export ANTHROPIC_API_KEY="sk-ant-..."
+
+Environment Variables:
+    ANTHROPIC_API_KEY          - Required. Your LLM provider API key.
+    FLYBROWSER_LLM_PROVIDER    - Optional. Defaults to "anthropic".
+    FLYBROWSER_LLM_MODEL       - Optional. Defaults to "claude-sonnet-4-5-20250929".
 """
 
 import asyncio
 import os
+import sys
+
 from flybrowser import FlyBrowser
 
 
-async def stream_to_twitch():
-    """Stream to Twitch using RTMP."""
-    stream_key = os.getenv("TWITCH_STREAM_KEY")
-    
-    if not stream_key:
-        print("Error: TWITCH_STREAM_KEY environment variable not set")
-        print("Get your stream key from: https://dashboard.twitch.tv/settings/stream")
-        return
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        # Stream to Twitch
-        stream = await browser.start_stream(
-            protocol="rtmp",
-            rtmp_url="rtmp://live.twitch.tv/app",
-            rtmp_key=stream_key
-        )
-        
-        print(f"Streaming to Twitch!")
-        print(f"Stream URL: {stream.get('rtmp_url', 'N/A')}")
-        print(f"Status: {stream.get('status', 'unknown')}")
-        
-        # Navigate and interact - this is what viewers will see
-        await browser.goto("https://news.ycombinator.com")
-        
-        # Perform actions
-        await browser.act("scroll down to see more posts")
-        await asyncio.sleep(5)
-        
-        posts = await browser.extract("Get the top 5 post titles")
-        print(f"\nExtracted posts: {posts.data}")
-        
-        # Continue streaming for a while
-        print("\nStreaming for 30 seconds...")
-        await asyncio.sleep(30)
-        
-        # Stop stream
-        await browser.stop_stream()
-        print("Stream stopped")
+async def attempt_rtmp_stream(browser: FlyBrowser) -> dict | None:
+    """
+    Attempt to start an RTMP stream.
 
-
-async def stream_to_youtube():
-    """Stream to YouTube using RTMP."""
-    stream_key = os.getenv("YOUTUBE_STREAM_KEY")
-    
-    if not stream_key:
-        print("Error: YOUTUBE_STREAM_KEY environment variable not set")
-        print("Get your stream key from: https://studio.youtube.com/")
-        return
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        # Stream to YouTube
-        stream = await browser.start_stream(
-            protocol="rtmp",
-            rtmp_url="rtmp://a.rtmp.youtube.com/live2",
-            rtmp_key=stream_key,
+    RTMP streaming requires external infrastructure (Twitch, YouTube, custom
+    RTMP server). This function demonstrates the API call pattern with
+    graceful error handling for environments where RTMP is not available.
+    """
+    try:
+        stream_info = await browser.start_stream(
+            protocol="hls",       # Use HLS as fallback-safe protocol
             quality="high",
-            codec="h264"
+            codec="h264",
         )
-        
-        print(f"Streaming to YouTube!")
-        print(f"Stream status: {stream.get('status', 'unknown')}")
-        
-        # Navigate to content
-        await browser.goto("https://example.com")
-        
-        # Perform demo actions
-        await browser.act("scroll through the page")
-        await asyncio.sleep(10)
-        
-        # Continue streaming
-        print("\nStreaming for 60 seconds...")
-        await asyncio.sleep(60)
-        
-        # Stop stream
-        await browser.stop_stream()
-        print("Stream stopped")
+        print("  Stream started successfully.")
+        for key, value in stream_info.items():
+            print(f"    {key}: {value}")
+        return stream_info
+    except Exception as exc:
+        print(f"  Stream start failed (expected in most environments): {exc}")
+        print("  Continuing with navigation-only demo.")
+        return None
 
 
-async def stream_with_monitoring():
-    """Stream with real-time monitoring and health checks."""
-    stream_key = os.getenv("TWITCH_STREAM_KEY")
-    
-    if not stream_key:
-        print("Using demo mode (no actual stream)")
-        stream_key = "demo_key_only"
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        # Start stream
-        stream = await browser.start_stream(
-            protocol="rtmp",
-            rtmp_url="rtmp://live.twitch.tv/app",
-            rtmp_key=stream_key
-        )
-        
-        print("Stream started with monitoring")
-        
-        # Navigate to content
-        await browser.goto("https://news.ycombinator.com")
-        
-        # Monitor stream health periodically
-        for i in range(5):
-            await asyncio.sleep(5)
-            
+async def monitor_stream(browser: FlyBrowser, checks: int = 3, interval: float = 3.0) -> None:
+    """Periodically check stream health."""
+    for i in range(1, checks + 1):
+        await asyncio.sleep(interval)
+        try:
             status = await browser.get_stream_status()
-            if status.get('active'):
-                stream_data = status.get('status', {})
-                metrics = stream_data.get('metrics', {})
-                
-                print(f"\n[Check {i+1}] Stream Health:")
-                print(f"  Active: {status.get('active')}")
-                print(f"  FPS: {metrics.get('current_fps', 0):.1f}")
-                print(f"  Bitrate: {metrics.get('current_bitrate', 0):.0f} bps")
-                print(f"  Health: {stream_data.get('health', 'unknown')}")
-                
-                # Perform an action
-                await browser.act("scroll down a bit")
-        
-        # Stop stream
-        await browser.stop_stream()
-        print("\nStream stopped")
+            active = status.get("active", False)
+            print(f"  [Health Check {i}/{checks}] Active: {active}")
+            for key, value in status.items():
+                if key != "active":
+                    print(f"    {key}: {value}")
+        except Exception as exc:
+            print(f"  [Health Check {i}/{checks}] Status unavailable: {exc}")
 
 
-async def main():
-    """Main entry point."""
-    print("=" * 60)
-    print("RTMP Streaming Examples")
-    print("=" * 60)
-    
-    # Check which stream keys are available
-    has_twitch = bool(os.getenv("TWITCH_STREAM_KEY"))
-    has_youtube = bool(os.getenv("YOUTUBE_STREAM_KEY"))
-    
-    if has_twitch:
-        print("\n--- Streaming to Twitch ---")
-        await stream_to_twitch()
-    elif has_youtube:
-        print("\n--- Streaming to YouTube ---")
-        await stream_to_youtube()
-    else:
-        print("\n--- Stream with Monitoring (Demo) ---")
-        print("Note: Set TWITCH_STREAM_KEY or YOUTUBE_STREAM_KEY to stream to platforms")
-        await stream_with_monitoring()
+async def stop_stream_safe(browser: FlyBrowser) -> dict | None:
+    """Stop the stream gracefully."""
+    try:
+        result = await browser.stop_stream()
+        print("  Stream stopped.")
+        for key, value in result.items():
+            print(f"    {key}: {value}")
+        return result
+    except Exception as exc:
+        print(f"  Stop stream failed: {exc}")
+        return None
+
+
+async def navigate_with_extraction(browser: FlyBrowser) -> list[dict]:
+    """Navigate to several sites and extract data, simulating a live broadcast."""
+    results: list[dict] = []
+
+    sites = [
+        {
+            "url": "https://news.ycombinator.com",
+            "query": "What are the top 3 stories on Hacker News right now?",
+            "label": "Hacker News top stories",
+        },
+        {
+            "url": "https://en.wikipedia.org/wiki/Main_Page",
+            "query": "What is the featured article on Wikipedia today?",
+            "label": "Wikipedia featured article",
+        },
+        {
+            "url": "https://books.toscrape.com",
+            "query": "What are the first 3 book titles and their prices?",
+            "label": "Books to Scrape catalogue",
+        },
+    ]
+
+    for site in sites:
+        print(f"\n  -> {site['label']}")
+        entry = {"label": site["label"], "url": site["url"], "success": False}
+        try:
+            await browser.goto(site["url"])
+            result = await browser.extract(site["query"])
+            if result.success:
+                print(f"     Extracted: {str(result.data)[:140]}")
+                entry["success"] = True
+                entry["data"] = str(result.data)[:200]
+            else:
+                print(f"     Extraction error: {result.error}")
+                entry["error"] = result.error
+        except Exception as exc:
+            print(f"     Exception: {exc}")
+            entry["error"] = str(exc)
+
+        results.append(entry)
+        await asyncio.sleep(2)
+
+    return results
+
+
+async def perform_interactive_actions(browser: FlyBrowser) -> None:
+    """Perform some interactive actions that would be visible in a stream."""
+    print("\n  Interactive actions (simulating live broadcast):")
+
+    actions = [
+        ("https://news.ycombinator.com", "Click on the first story link to read it."),
+        (None, "Scroll down slowly through the article or page content."),
+    ]
+
+    for url, instruction in actions:
+        try:
+            if url:
+                await browser.goto(url)
+            act_result = await browser.act(instruction)
+            if act_result.success:
+                print(f"    [OK] {instruction[:80]}")
+            else:
+                print(f"    [FAIL] {instruction[:60]}: {act_result.error}")
+        except Exception as exc:
+            print(f"    [ERROR] {instruction[:60]}: {exc}")
+        await asyncio.sleep(2)
+
+    # Observe the resulting page
+    try:
+        obs = await browser.observe("What interactive elements are visible on this page?")
+        if obs.success:
+            print(f"    Observed: {str(obs.data)[:140]}")
+    except Exception as exc:
+        print(f"    Observe error: {exc}")
+
+
+async def demo_rtmp_streaming() -> None:
+    """Full RTMP streaming concept demonstration."""
+    provider = os.getenv("FLYBROWSER_LLM_PROVIDER", "anthropic")
+    model = os.getenv("FLYBROWSER_LLM_MODEL", "claude-sonnet-4-5-20250929")
+
+    if not os.getenv("ANTHROPIC_API_KEY") and provider == "anthropic":
+        print("ERROR: ANTHROPIC_API_KEY environment variable is not set.")
+        sys.exit(1)
+
+    print("=" * 65)
+    print("  FlyBrowser RTMP Streaming Concept Demo")
+    print(f"  Provider: {provider}  |  Model: {model}")
+    print("  NOTE: RTMP requires external infrastructure. This demo uses")
+    print("  HLS as a fallback and handles all errors gracefully.")
+    print("=" * 65)
+
+    stream_active = False
+
+    async with FlyBrowser(llm_provider=provider, llm_model=model, headless=True) as browser:
+        # Phase 1: Attempt to start stream
+        print("\n[Phase 1] Attempting to start stream")
+        stream_info = await attempt_rtmp_stream(browser)
+        stream_active = stream_info is not None
+
+        # Phase 2: Navigate and extract (works regardless of stream status)
+        print("\n[Phase 2] Navigating and extracting data")
+        extraction_results = await navigate_with_extraction(browser)
+
+        # Phase 3: Monitor stream if active
+        if stream_active:
+            print("\n[Phase 3] Monitoring stream health")
+            await monitor_stream(browser, checks=2, interval=2.0)
+        else:
+            print("\n[Phase 3] Skipping stream monitoring (stream not active)")
+
+        # Phase 4: Interactive actions
+        print("\n[Phase 4] Interactive actions")
+        await perform_interactive_actions(browser)
+
+        # Phase 5: Stop stream
+        if stream_active:
+            print("\n[Phase 5] Stopping stream")
+            await stop_stream_safe(browser)
+        else:
+            print("\n[Phase 5] No stream to stop")
+
+        # Summary
+        successful = sum(1 for r in extraction_results if r.get("success"))
+        total = len(extraction_results)
+        usage = browser.get_usage_summary()
+
+        print("\n" + "=" * 65)
+        print("  RTMP STREAMING DEMO SUMMARY")
+        print("=" * 65)
+        print(f"    Stream attempted : Yes")
+        print(f"    Stream active    : {stream_active}")
+        print(f"    Sites visited    : {total}")
+        print(f"    Extractions OK   : {successful}/{total}")
+        print(f"    LLM Usage        : {usage}")
+        print("=" * 65)
+
+    print("\n  RTMP streaming demo complete.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(demo_rtmp_streaming())

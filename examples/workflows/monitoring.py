@@ -1,436 +1,170 @@
+# Copyright 2026 Firefly Software Solutions Inc
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
-Example: Monitoring Workflow
+Website Health Monitor
+======================
 
-Automates website and service monitoring with alerting.
-Demonstrates health checks, uptime monitoring, and anomaly detection.
+Checks the health of multiple public websites (github.com, wikipedia.org,
+news.ycombinator.com), extracts page status information, takes screenshots,
+and produces a consolidated health report.  Demonstrates observe, extract,
+screenshot, and error handling across unreliable network conditions.
 
-Prerequisites:
-- pip install flybrowser
-- export OPENAI_API_KEY="sk-..."
+Environment variables:
+    ANTHROPIC_API_KEY          - API key for the configured LLM provider
+    FLYBROWSER_LLM_PROVIDER   - LLM provider (default: "anthropic")
+    FLYBROWSER_LLM_MODEL      - LLM model   (default: "claude-sonnet-4-5-20250929")
 """
 
 import asyncio
 import json
 import os
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
+
 from flybrowser import FlyBrowser
 
 
-async def check_site_health(browser: FlyBrowser, url: str) -> dict:
+SITES_TO_MONITOR = [
+    {
+        "name": "GitHub",
+        "url": "https://github.com",
+        "expect_text": "Sign up",
+    },
+    {
+        "name": "Wikipedia",
+        "url": "https://en.wikipedia.org/wiki/Main_Page",
+        "expect_text": "Featured article",
+    },
+    {
+        "name": "Hacker News",
+        "url": "https://news.ycombinator.com",
+        "expect_text": "Hacker News",
+    },
+]
+
+
+async def check_site(browser: FlyBrowser, site: dict) -> dict:
     """
-    Check health of a website.
-    
-    Args:
-        browser: FlyBrowser instance
-        url: URL to check
-        
-    Returns:
-        Health check results
+    Run a full health check on a single site: navigate, observe key elements,
+    extract status details, and capture a screenshot.
     """
-    start_time = datetime.now()
-    
+    report: dict = {
+        "name": site["name"],
+        "url": site["url"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "reachable": False,
+        "has_expected_content": False,
+        "page_title": None,
+        "screenshot_bytes": 0,
+        "issues": [],
+    }
+
     try:
-        await browser.goto(url)
-        load_time = (datetime.now() - start_time).total_seconds()
-        
-        # Check for common error indicators
-        status = await browser.extract(
-            "Is this page loading correctly? "
-            "Look for: error messages, 404/500 errors, maintenance notices, "
-            "or blank content. Return status and any issues found.",
-            schema={
-                "type": "object",
-                "properties": {
-                    "is_healthy": {"type": "boolean"},
-                    "status_code": {"type": "string"},
-                    "issues": {
-                        "type": "array",
-                        "items": {"type": "string"}
-                    }
-                }
-            }
+        # Step 1 -- Navigate
+        await browser.goto(site["url"])
+        report["reachable"] = True
+
+        # Step 2 -- Observe expected element
+        obs = await browser.observe(
+            f"Is the text '{site['expect_text']}' visible on the page?"
         )
-        
-        return {
-            "url": url,
-            "timestamp": datetime.now().isoformat(),
-            "reachable": True,
-            "load_time_seconds": round(load_time, 2),
-            "is_healthy": status.data.get("is_healthy", False) if status.success else False,
-            "issues": status.data.get("issues", []) if status.success else ["Could not analyze page"]
-        }
-        
-    except Exception as e:
-        return {
-            "url": url,
-            "timestamp": datetime.now().isoformat(),
-            "reachable": False,
-            "load_time_seconds": None,
-            "is_healthy": False,
-            "issues": [str(e)]
-        }
+        if obs.success:
+            report["has_expected_content"] = True
+            print(f"    Observe OK  ({obs.llm_usage.total_tokens} tokens)")
+        else:
+            report["issues"].append(f"Expected text not found: {site['expect_text']}")
 
-
-async def check_element_presence(browser: FlyBrowser, url: str, elements: list[str]) -> dict:
-    """
-    Verify specific elements are present on a page.
-    
-    Args:
-        browser: FlyBrowser instance
-        url: URL to check
-        elements: List of element descriptions to verify
-        
-    Returns:
-        Element check results
-    """
-    await browser.goto(url)
-    
-    results = {
-        "url": url,
-        "timestamp": datetime.now().isoformat(),
-        "elements": []
-    }
-    
-    for element in elements:
-        check = await browser.observe(f"Find: {element}")
-        results["elements"].append({
-            "description": element,
-            "found": check.success and bool(check.elements)
-        })
-    
-    results["all_present"] = all(e["found"] for e in results["elements"])
-    return results
-
-
-async def check_form_functionality(browser: FlyBrowser, url: str, form_test: dict) -> dict:
-    """
-    Test form submission functionality.
-    
-    Args:
-        browser: FlyBrowser instance
-        url: URL of the form page
-        form_test: Test configuration with field values
-        
-    Returns:
-        Form test results
-    """
-    await browser.goto(url)
-    
-    results = {
-        "url": url,
-        "timestamp": datetime.now().isoformat(),
-        "form_found": False,
-        "submission_successful": False,
-        "errors": []
-    }
-    
-    # Find form
-    form = await browser.observe(form_test.get("form_selector", "Find the main form on this page"))
-    results["form_found"] = form.success and bool(form.elements)
-    
-    if not results["form_found"]:
-        results["errors"].append("Form not found")
-        return results
-    
-    # Fill form with test data
-    for field_name, value in form_test.get("fields", {}).items():
-        try:
-            await browser.act(f"Fill the {field_name} field with '{value}'")
-        except Exception as e:
-            results["errors"].append(f"Failed to fill {field_name}: {str(e)}")
-    
-    # Submit form
-    try:
-        await browser.act("Submit the form")
-        await asyncio.sleep(2)
-        
-        # Check for success or error
-        outcome = await browser.extract(
-            "Was the form submitted successfully? "
-            "Look for success messages, error messages, or validation errors.",
-            schema={
-                "type": "object",
-                "properties": {
-                    "success": {"type": "boolean"},
-                    "message": {"type": "string"}
-                }
-            }
+        # Step 3 -- Extract page health details
+        ext = await browser.extract(
+            "Extract the page title and report whether the page appears to be "
+            "loading correctly. Note any error banners, outage notices, or "
+            "missing content."
         )
-        
-        results["submission_successful"] = outcome.data.get("success", False) if outcome.success else False
-        if outcome.data.get("message"):
-            results["response_message"] = outcome.data["message"]
-            
-    except Exception as e:
-        results["errors"].append(f"Submission failed: {str(e)}")
-    
-    return results
+        if ext.success:
+            report["page_title"] = ext.data if isinstance(ext.data, str) else str(ext.data)
+            print(f"    Extract OK  (duration {ext.execution.duration_seconds:.2f}s)")
+        else:
+            report["issues"].append(f"Extraction error: {ext.error}")
+
+        # Step 4 -- Screenshot
+        screenshot = await browser.screenshot()
+        report["screenshot_bytes"] = len(screenshot.get("data_base64", ""))
+
+    except Exception as exc:
+        report["issues"].append(f"Unexpected error: {exc}")
+
+    return report
 
 
-async def monitor_price_changes(browser: FlyBrowser, url: str, product_selector: str) -> dict:
-    """
-    Monitor price changes on a product page.
-    
-    Args:
-        browser: FlyBrowser instance
-        url: Product page URL
-        product_selector: Selector or description for the product
-        
-    Returns:
-        Price monitoring results
-    """
-    await browser.goto(url)
-    
-    price_info = await browser.extract(
-        f"What is the current price of {product_selector}? "
-        "Include regular price, sale price if applicable, and availability.",
-        schema={
-            "type": "object",
-            "properties": {
-                "product_name": {"type": "string"},
-                "current_price": {"type": "string"},
-                "original_price": {"type": "string"},
-                "is_on_sale": {"type": "boolean"},
-                "in_stock": {"type": "boolean"},
-                "currency": {"type": "string"}
-            }
-        }
-    )
-    
-    return {
-        "url": url,
-        "timestamp": datetime.now().isoformat(),
-        "price_data": price_info.data if price_info.success else None
-    }
+def print_health_dashboard(reports: list[dict]) -> None:
+    """Render a summary dashboard to the terminal."""
+    print("\n" + "=" * 64)
+    print("WEBSITE HEALTH DASHBOARD")
+    print(f"Time: {datetime.now(timezone.utc).isoformat()}")
+    print("=" * 64)
+
+    for r in reports:
+        status = "HEALTHY" if r["reachable"] and not r["issues"] else "DEGRADED"
+        icon = "[OK]" if status == "HEALTHY" else "[!!]"
+        print(f"\n  {icon}  {r['name']}  ({r['url']})")
+        print(f"       Reachable: {r['reachable']}")
+        print(f"       Expected content present: {r['has_expected_content']}")
+        print(f"       Screenshot size: {r['screenshot_bytes']} bytes")
+        if r["issues"]:
+            for issue in r["issues"]:
+                print(f"       Issue: {issue}")
+
+    healthy = sum(1 for r in reports if r["reachable"] and not r["issues"])
+    print(f"\n  Overall: {healthy}/{len(reports)} sites healthy")
+    print("=" * 64)
 
 
-async def run_monitoring_suite(sites: list[dict], output_dir: str = "monitoring"):
-    """
-    Run comprehensive monitoring on multiple sites.
-    
-    Args:
-        sites: List of site configurations
-        output_dir: Directory for results
-    """
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    
-    results = {
-        "run_timestamp": datetime.now().isoformat(),
-        "sites": []
-    }
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        for site in sites:
-            print(f"Checking: {site['url']}")
-            
-            site_result = {
-                "url": site["url"],
-                "name": site.get("name", site["url"]),
-                "checks": {}
-            }
-            
-            # Health check
-            if site.get("health_check", True):
-                site_result["checks"]["health"] = await check_site_health(browser, site["url"])
-            
-            # Element presence
-            if site.get("required_elements"):
-                site_result["checks"]["elements"] = await check_element_presence(
-                    browser, site["url"], site["required_elements"]
-                )
-            
-            # Form test
-            if site.get("form_test"):
-                site_result["checks"]["form"] = await check_form_functionality(
-                    browser, site["url"], site["form_test"]
-                )
-            
-            results["sites"].append(site_result)
-    
-    # Save results
-    results_file = output_path / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(results_file, "w") as f:
-        json.dump(results, f, indent=2)
-    
-    # Generate summary
-    print("\n=== Monitoring Summary ===")
-    for site in results["sites"]:
-        health = site["checks"].get("health", {})
-        status = "HEALTHY" if health.get("is_healthy") else "UNHEALTHY"
-        print(f"  [{status}] {site['name']}")
-        if health.get("load_time_seconds"):
-            print(f"           Load time: {health['load_time_seconds']}s")
-        if health.get("issues"):
-            for issue in health["issues"]:
-                print(f"           Issue: {issue}")
-    
-    return results
+async def main() -> None:
+    """Run health checks against all configured sites."""
+    provider = os.getenv("FLYBROWSER_LLM_PROVIDER", "anthropic")
+    model = os.getenv("FLYBROWSER_LLM_MODEL", "claude-sonnet-4-5-20250929")
 
+    print("=" * 64)
+    print("Website Health Monitor")
+    print(f"Provider: {provider}  |  Model: {model}")
+    print(f"Sites: {len(SITES_TO_MONITOR)}")
+    print("=" * 64)
 
-async def continuous_monitoring(
-    sites: list[dict],
-    interval_seconds: int = 300,
-    duration_hours: int = 24
-):
-    """
-    Run continuous monitoring with periodic checks.
-    
-    Args:
-        sites: List of site configurations
-        interval_seconds: Time between checks
-        duration_hours: Total monitoring duration
-    """
-    end_time = datetime.now().timestamp() + (duration_hours * 3600)
-    check_count = 0
-    
-    print(f"Starting continuous monitoring for {duration_hours} hours")
-    print(f"Checking {len(sites)} sites every {interval_seconds} seconds")
-    
-    while datetime.now().timestamp() < end_time:
-        check_count += 1
-        print(f"\n--- Check #{check_count} at {datetime.now().isoformat()} ---")
-        
-        results = await run_monitoring_suite(sites, f"monitoring/run_{check_count}")
-        
-        # Check for alerts
-        for site in results["sites"]:
-            health = site["checks"].get("health", {})
-            if not health.get("is_healthy"):
-                print(f"ALERT: {site['name']} is unhealthy!")
-                # Here you could add notification logic (email, Slack, etc.)
-        
-        await asyncio.sleep(interval_seconds)
+    reports: list[dict] = []
 
+    async with FlyBrowser(llm_provider=provider, llm_model=model, headless=True) as browser:
+        for site in SITES_TO_MONITOR:
+            print(f"\n  Checking {site['name']}...")
+            report = await check_site(browser, site)
+            reports.append(report)
 
-async def check_api_endpoint(url: str, expected_status: int = 200) -> dict:
-    """
-    Check API endpoint health.
-    
-    Args:
-        url: API endpoint URL
-        expected_status: Expected HTTP status code
-        
-    Returns:
-        Check results
-    """
-    import aiohttp
-    
-    start = datetime.now()
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=30) as response:
-                response_time = (datetime.now() - start).total_seconds()
-                
-                return {
-                    "url": url,
-                    "timestamp": datetime.now().isoformat(),
-                    "status_code": response.status,
-                    "expected_status": expected_status,
-                    "is_healthy": response.status == expected_status,
-                    "response_time_seconds": round(response_time, 3)
-                }
-    except Exception as e:
-        return {
-            "url": url,
-            "timestamp": datetime.now().isoformat(),
-            "status_code": None,
-            "expected_status": expected_status,
-            "is_healthy": False,
-            "error": str(e)
-        }
+        usage = browser.get_usage_summary()
 
+    # Display dashboard
+    print_health_dashboard(reports)
 
-async def visual_regression_check(browser: FlyBrowser, url: str, baseline_path: str) -> dict:
-    """
-    Perform visual regression check against baseline.
-    
-    Args:
-        browser: FlyBrowser instance
-        url: URL to check
-        baseline_path: Path to baseline screenshot
-        
-    Returns:
-        Visual check results
-    """
-    await browser.goto(url)
-    await asyncio.sleep(2)  # Wait for page to stabilize
-    
-    # Capture current screenshot
-    screenshot = await browser.screenshot()
-    
-    # Compare using vision
-    comparison = await browser.extract(
-        f"Compare the current page visually. "
-        f"Are there any significant visual differences or issues? "
-        f"Look for broken layouts, missing images, text alignment issues, "
-        f"or any visual anomalies.",
-        use_vision=True,
-        schema={
-            "type": "object",
-            "properties": {
-                "has_issues": {"type": "boolean"},
-                "issues_found": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                },
-                "overall_status": {"type": "string"}
-            }
-        }
-    )
-    
-    return {
-        "url": url,
-        "timestamp": datetime.now().isoformat(),
-        "screenshot_captured": True,
-        "visual_issues": comparison.data.get("has_issues", False) if comparison.success else None,
-        "issues": comparison.data.get("issues_found", []) if comparison.success else []
-    }
-
-
-async def main():
-    """Main entry point for monitoring examples."""
-    print("=" * 60)
-    print("Website Monitoring Workflow Examples")
-    print("=" * 60)
-    
-    # Example monitoring configuration
-    sites_to_monitor = [
-        {
-            "name": "Hacker News",
-            "url": "https://news.ycombinator.com",
-            "health_check": True,
-            "required_elements": [
-                "top navigation",
-                "list of stories",
-                "points/score for stories"
-            ]
-        },
-        {
-            "name": "Example.com",
-            "url": "https://example.com",
-            "health_check": True,
-            "required_elements": [
-                "main heading",
-                "paragraph text",
-                "link to more information"
-            ]
-        }
-    ]
-    
-    # Run monitoring suite
-    print("\n--- Running Monitoring Suite ---")
-    results = await run_monitoring_suite(sites_to_monitor)
-    
-    # Print detailed results
-    print("\n--- Detailed Results ---")
-    print(json.dumps(results, indent=2))
+    # Persist results
+    output_file = f"health_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    serializable = [{k: v for k, v in r.items()} for r in reports]
+    with open(output_file, "w") as fh:
+        json.dump(
+            {"generated_at": datetime.now(timezone.utc).isoformat(), "sites": serializable},
+            fh,
+            indent=2,
+        )
+    print(f"\nFull report saved to: {output_file}")
+    print(f"Total LLM tokens used: {usage.get('total_tokens', 0)}")
 
 
 if __name__ == "__main__":

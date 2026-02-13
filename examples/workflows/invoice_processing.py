@@ -1,358 +1,192 @@
+# Copyright 2026 Firefly Software Solutions Inc
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
-Example: Invoice Processing Workflow
+Document / Table Extraction Workflow
+=====================================
 
-Automates invoice download, extraction, and organization.
-Demonstrates multi-step workflow with file handling and data extraction.
+Navigates to Wikipedia pages containing structured tables (list of
+countries by GDP and by population), extracts the tabular data, normalizes
+it, and produces a formatted structured report.  Demonstrates multi-table
+extraction from real public pages, data normalization, cross-referencing
+between datasets, and comprehensive LLM usage tracking.
 
-Prerequisites:
-- pip install flybrowser
-- export OPENAI_API_KEY="sk-..."
+Environment variables:
+    ANTHROPIC_API_KEY          - API key for the configured LLM provider
+    FLYBROWSER_LLM_PROVIDER   - LLM provider (default: "anthropic")
+    FLYBROWSER_LLM_MODEL      - LLM model   (default: "claude-sonnet-4-5-20250929")
 """
 
 import asyncio
 import json
 import os
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
+
 from flybrowser import FlyBrowser
 
 
-async def login_to_portal(browser: FlyBrowser, credentials: dict):
-    """
-    Log in to vendor/invoice portal.
-    
-    Args:
-        browser: FlyBrowser instance
-        credentials: Login credentials
-    """
-    # Store credentials securely
-    await browser.store_credential("portal_user", credentials["username"])
-    await browser.store_credential("portal_pass", credentials["password"])
-    
-    # Fill login form
-    await browser.secure_fill(
-        "username_field",
-        "portal_user",
-        selector="input[name='username'], input[name='email'], #username"
-    )
-    await browser.secure_fill(
-        "password_field",
-        "portal_pass",
-        selector="input[type='password'], #password"
-    )
-    
-    # Submit login
-    await browser.act("Click the login or sign in button")
-    await asyncio.sleep(2)
-    
-    # Verify login success
-    login_check = await browser.extract(
-        "Am I logged in? Look for account name, logout button, or dashboard content."
-    )
-    return login_check.success and login_check.data
+GDP_URL = "https://en.wikipedia.org/wiki/List_of_countries_by_GDP_(nominal)"
+POP_URL = "https://en.wikipedia.org/wiki/List_of_countries_and_dependencies_by_population"
+
+TOP_N = 10  # How many countries to include in the final report
 
 
-async def navigate_to_invoices(browser: FlyBrowser):
-    """Navigate to the invoices section."""
-    # Use agent for flexible navigation
-    result = await browser.agent(
-        task="Navigate to the invoices or billing section",
-        context="""
-        Look for links or menu items like:
-        - Invoices
-        - Billing
-        - Statements
-        - Account > Invoices
-        - Billing History
-        
-        Click to navigate there.
-        """
-    )
-    return result.success
+async def extract_gdp_table(browser: FlyBrowser) -> list[dict]:
+    """Navigate to the GDP page and extract the top countries by GDP."""
+    print("  [GDP] Navigating...")
+    await browser.goto(GDP_URL)
 
-
-async def extract_invoice_list(browser: FlyBrowser) -> list[dict]:
-    """
-    Extract list of available invoices.
-    
-    Returns:
-        List of invoice metadata
-    """
-    invoices = await browser.extract(
-        "What invoices are listed on this page? "
-        "For each invoice, get: invoice number, date, amount, and status.",
-        schema={
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "invoice_number": {"type": "string"},
-                    "date": {"type": "string"},
-                    "amount": {"type": "string"},
-                    "status": {"type": "string"},
-                    "download_available": {"type": "boolean"}
-                }
-            }
-        }
+    result = await browser.extract(
+        f"Extract the top {TOP_N} countries by nominal GDP from the main table. "
+        "For each country include: rank, country name, and GDP value in "
+        "US dollars (as shown in the table)."
     )
-    
-    if invoices.success and invoices.data:
-        return invoices.data
+
+    if result.success:
+        print(f"  [GDP] Extracted ({result.llm_usage.total_tokens} tokens, "
+              f"{result.execution.duration_seconds:.1f}s)")
+        result.pprint()
+        data = result.data if isinstance(result.data, list) else [result.data]
+        return data[:TOP_N]
+
+    print(f"  [GDP] Extraction failed: {result.error}")
     return []
 
 
-async def download_invoice(browser: FlyBrowser, invoice_number: str, output_dir: Path):
-    """
-    Download a specific invoice.
-    
-    Args:
-        browser: FlyBrowser instance
-        invoice_number: Invoice to download
-        output_dir: Directory to save downloads
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Click download for specific invoice
-    result = await browser.act(
-        f"Click the download or PDF button for invoice {invoice_number}"
+async def extract_population_table(browser: FlyBrowser) -> list[dict]:
+    """Navigate to the population page and extract the top countries."""
+    print("  [POP] Navigating...")
+    await browser.goto(POP_URL)
+
+    result = await browser.extract(
+        f"Extract the top {TOP_N} countries by population from the main table. "
+        "For each country include: rank, country name, and population figure."
     )
-    
+
     if result.success:
-        await asyncio.sleep(2)  # Wait for download
-        print(f"Downloaded invoice: {invoice_number}")
-        return True
-    return False
+        print(f"  [POP] Extracted ({result.llm_usage.total_tokens} tokens, "
+              f"{result.execution.duration_seconds:.1f}s)")
+        result.pprint()
+        data = result.data if isinstance(result.data, list) else [result.data]
+        return data[:TOP_N]
+
+    print(f"  [POP] Extraction failed: {result.error}")
+    return []
 
 
-async def process_invoice_batch(
-    portal_url: str,
-    credentials: dict,
-    output_dir: str = "invoices"
-) -> dict:
+def cross_reference(gdp_rows: list[dict], pop_rows: list[dict]) -> list[dict]:
     """
-    Process batch of invoices from a portal.
-    
-    Args:
-        portal_url: URL of the invoice portal
-        credentials: Login credentials
-        output_dir: Directory for downloads
-        
-    Returns:
-        Processing summary
+    Merge GDP and population data by country name.  Returns a list of
+    records with country, gdp, and population fields where both are known.
     """
-    results = {
-        "processed_at": datetime.now().isoformat(),
-        "portal": portal_url,
-        "invoices_found": 0,
-        "invoices_downloaded": 0,
-        "invoice_data": [],
-        "errors": []
+    def normalize_name(entry: dict) -> str:
+        name = entry.get("country") or entry.get("country_name") or entry.get("name") or ""
+        return name.strip().lower()
+
+    gdp_lookup: dict[str, dict] = {}
+    for row in gdp_rows:
+        key = normalize_name(row)
+        if key:
+            gdp_lookup[key] = row
+
+    merged: list[dict] = []
+    for row in pop_rows:
+        key = normalize_name(row)
+        if key in gdp_lookup:
+            merged.append({
+                "country": row.get("country") or row.get("country_name") or row.get("name"),
+                "population": row.get("population") or row.get("population_figure"),
+                "gdp": gdp_lookup[key].get("gdp") or gdp_lookup[key].get("gdp_value"),
+            })
+
+    return merged
+
+
+def print_structured_report(
+    gdp_rows: list[dict], pop_rows: list[dict], merged: list[dict]
+) -> None:
+    """Render the final structured report."""
+    print("\n" + "=" * 64)
+    print("STRUCTURED DATA EXTRACTION REPORT")
+    print(f"Generated: {datetime.now(timezone.utc).isoformat()}")
+    print("=" * 64)
+
+    print(f"\nSource 1 -- GDP (top {TOP_N}):")
+    for row in gdp_rows:
+        name = row.get("country") or row.get("country_name") or row.get("name") or "?"
+        gdp = row.get("gdp") or row.get("gdp_value") or "?"
+        print(f"  {name}: {gdp}")
+
+    print(f"\nSource 2 -- Population (top {TOP_N}):")
+    for row in pop_rows:
+        name = row.get("country") or row.get("country_name") or row.get("name") or "?"
+        pop = row.get("population") or row.get("population_figure") or "?"
+        print(f"  {name}: {pop}")
+
+    print(f"\nCross-Referenced (countries in both lists):")
+    if merged:
+        for m in merged:
+            print(f"  {m['country']}: GDP={m['gdp']}, Pop={m['population']}")
+    else:
+        print("  (no overlapping countries found)")
+
+    print("\n" + "=" * 64)
+
+
+async def main() -> None:
+    """Run the document extraction workflow."""
+    provider = os.getenv("FLYBROWSER_LLM_PROVIDER", "anthropic")
+    model = os.getenv("FLYBROWSER_LLM_MODEL", "claude-sonnet-4-5-20250929")
+
+    print("=" * 64)
+    print("Document / Table Extraction Workflow")
+    print(f"Provider: {provider}  |  Model: {model}")
+    print("=" * 64)
+
+    gdp_rows: list[dict] = []
+    pop_rows: list[dict] = []
+
+    async with FlyBrowser(llm_provider=provider, llm_model=model, headless=True) as browser:
+        gdp_rows = await extract_gdp_table(browser)
+        pop_rows = await extract_population_table(browser)
+
+        # Verify we ended on a Wikipedia page
+        obs = await browser.observe("Is this a Wikipedia list article?")
+        if obs.success:
+            print(f"\n  Page verification: {obs.data}")
+
+        usage = browser.get_usage_summary()
+
+    # Cross-reference and report
+    merged = cross_reference(gdp_rows, pop_rows)
+    print_structured_report(gdp_rows, pop_rows, merged)
+
+    # Persist
+    output = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "provider": provider,
+        "model": model,
+        "total_tokens": usage.get("total_tokens", 0),
+        "gdp_data": {"url": GDP_URL, "rows": gdp_rows},
+        "population_data": {"url": POP_URL, "rows": pop_rows},
+        "cross_referenced": merged,
     }
-    
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(portal_url)
-        
-        # Step 1: Login
-        print("Logging in...")
-        if not await login_to_portal(browser, credentials):
-            results["errors"].append("Login failed")
-            return results
-        
-        # Step 2: Navigate to invoices
-        print("Navigating to invoices...")
-        if not await navigate_to_invoices(browser):
-            results["errors"].append("Could not find invoices section")
-            return results
-        
-        # Step 3: Extract invoice list
-        print("Extracting invoice list...")
-        invoices = await extract_invoice_list(browser)
-        results["invoices_found"] = len(invoices)
-        results["invoice_data"] = invoices
-        
-        # Step 4: Download each invoice
-        print(f"Found {len(invoices)} invoices")
-        for invoice in invoices:
-            inv_num = invoice.get("invoice_number", "unknown")
-            print(f"  Processing: {inv_num}")
-            
-            try:
-                if await download_invoice(browser, inv_num, output_path):
-                    results["invoices_downloaded"] += 1
-            except Exception as e:
-                results["errors"].append(f"Failed to download {inv_num}: {str(e)}")
-    
-    # Save summary
-    summary_path = output_path / "processing_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(results, f, indent=2)
-    
-    print(f"\nProcessing complete:")
-    print(f"  Found: {results['invoices_found']} invoices")
-    print(f"  Downloaded: {results['invoices_downloaded']} invoices")
-    print(f"  Errors: {len(results['errors'])}")
-    
-    return results
-
-
-async def extract_invoice_details(browser: FlyBrowser, invoice_url: str) -> dict:
-    """
-    Extract detailed information from an invoice page.
-    
-    Args:
-        browser: FlyBrowser instance
-        invoice_url: URL of the invoice detail page
-        
-    Returns:
-        Extracted invoice details
-    """
-    await browser.goto(invoice_url)
-    
-    details = await browser.extract(
-        "Extract all details from this invoice",
-        schema={
-            "type": "object",
-            "properties": {
-                "invoice_number": {"type": "string"},
-                "invoice_date": {"type": "string"},
-                "due_date": {"type": "string"},
-                "vendor": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "address": {"type": "string"},
-                        "contact": {"type": "string"}
-                    }
-                },
-                "bill_to": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "address": {"type": "string"}
-                    }
-                },
-                "line_items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "description": {"type": "string"},
-                            "quantity": {"type": "number"},
-                            "unit_price": {"type": "number"},
-                            "amount": {"type": "number"}
-                        }
-                    }
-                },
-                "subtotal": {"type": "number"},
-                "tax": {"type": "number"},
-                "total": {"type": "number"},
-                "payment_terms": {"type": "string"},
-                "notes": {"type": "string"}
-            }
-        }
-    )
-    
-    return details.data if details.success else {}
-
-
-async def reconcile_invoices(
-    portal_url: str,
-    credentials: dict,
-    expected_invoices: list[dict]
-) -> dict:
-    """
-    Reconcile portal invoices against expected list.
-    
-    Args:
-        portal_url: URL of the invoice portal
-        credentials: Login credentials
-        expected_invoices: List of expected invoices with amounts
-        
-    Returns:
-        Reconciliation report
-    """
-    report = {
-        "matched": [],
-        "missing": [],
-        "unexpected": [],
-        "amount_mismatches": []
-    }
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(portal_url)
-        await login_to_portal(browser, credentials)
-        await navigate_to_invoices(browser)
-        
-        portal_invoices = await extract_invoice_list(browser)
-        
-        # Create lookup by invoice number
-        portal_lookup = {
-            inv.get("invoice_number"): inv
-            for inv in portal_invoices
-        }
-        expected_lookup = {
-            inv.get("invoice_number"): inv
-            for inv in expected_invoices
-        }
-        
-        # Check each expected invoice
-        for inv_num, expected in expected_lookup.items():
-            if inv_num in portal_lookup:
-                portal_inv = portal_lookup[inv_num]
-                
-                # Compare amounts
-                if portal_inv.get("amount") == expected.get("amount"):
-                    report["matched"].append(inv_num)
-                else:
-                    report["amount_mismatches"].append({
-                        "invoice_number": inv_num,
-                        "expected": expected.get("amount"),
-                        "actual": portal_inv.get("amount")
-                    })
-            else:
-                report["missing"].append(inv_num)
-        
-        # Check for unexpected invoices
-        for inv_num in portal_lookup:
-            if inv_num not in expected_lookup:
-                report["unexpected"].append(inv_num)
-    
-    return report
-
-
-async def main():
-    """Main entry point for invoice processing."""
-    print("=" * 60)
-    print("Invoice Processing Workflow Examples")
-    print("=" * 60)
-    
-    # Example configuration (replace with real values)
-    portal_url = "https://example-invoice-portal.com"
-    credentials = {
-        "username": os.getenv("PORTAL_USERNAME", "demo@example.com"),
-        "password": os.getenv("PORTAL_PASSWORD", "demo123")
-    }
-    
-    # Process invoices
-    print("\n--- Processing Invoice Batch ---")
-    results = await process_invoice_batch(
-        portal_url=portal_url,
-        credentials=credentials,
-        output_dir="downloaded_invoices"
-    )
-    
-    print(f"\nResults: {json.dumps(results, indent=2)}")
+    filename = f"table_extraction_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(filename, "w") as fh:
+        json.dump(output, fh, indent=2, default=str)
+    print(f"\nData saved to: {filename}")
+    print(f"Total LLM tokens: {usage.get('total_tokens', 0)}")
 
 
 if __name__ == "__main__":

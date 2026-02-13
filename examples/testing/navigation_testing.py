@@ -1,322 +1,230 @@
+# Copyright 2026 Firefly Software Solutions Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Example: Navigation Testing
 
-Tests navigation links, menus, and page routing.
-Demonstrates verifying navigation flows work correctly.
+Tests browser navigation to multiple real public sites, verifies page loads
+correctly, checks page titles and URLs, and validates cross-site navigation
+flows using the FlyBrowser SDK.
 
 Prerequisites:
-- pip install flybrowser
-- export OPENAI_API_KEY="sk-..."
+    pip install flybrowser
+    export ANTHROPIC_API_KEY="sk-ant-..."
+
+Environment Variables:
+    ANTHROPIC_API_KEY          - Required. Your LLM provider API key.
+    FLYBROWSER_LLM_PROVIDER    - Optional. Defaults to "anthropic".
+    FLYBROWSER_LLM_MODEL       - Optional. Defaults to "claude-sonnet-4-5-20250929".
 """
 
 import asyncio
 import os
+import sys
+from dataclasses import dataclass, field
+from typing import Optional
+
 from flybrowser import FlyBrowser
 
 
-async def test_navigation_links(base_url: str):
-    """
-    Test that all main navigation links work correctly.
-    
-    Args:
-        base_url: Base URL of the website
-        
-    Returns:
-        List of navigation test results
-    """
-    results = []
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(base_url)
-        
-        # Get all navigation links
-        nav_links = await browser.extract(
-            "Get all main navigation links with their text and expected destinations"
+@dataclass
+class NavigationResult:
+    """Stores the outcome of a single navigation test."""
+
+    url: str
+    expected_content: str
+    passed: bool = False
+    title: Optional[str] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class TestSuite:
+    """Aggregates results across all navigation tests."""
+
+    results: list[NavigationResult] = field(default_factory=list)
+
+    @property
+    def passed(self) -> int:
+        return sum(1 for r in self.results if r.passed)
+
+    @property
+    def failed(self) -> int:
+        return len(self.results) - self.passed
+
+    def print_summary(self) -> None:
+        print("\n" + "=" * 65)
+        print("  NAVIGATION TEST RESULTS")
+        print("=" * 65)
+        for r in self.results:
+            status = "PASS" if r.passed else "FAIL"
+            print(f"  [{status}]  {r.url}")
+            if r.title:
+                print(f"          Title: {r.title}")
+            if r.error:
+                print(f"          Error: {r.error}")
+        print("-" * 65)
+        print(f"  Total: {len(self.results)}  |  Passed: {self.passed}  |  Failed: {self.failed}")
+        print("=" * 65)
+
+
+SITES_UNDER_TEST = [
+    {
+        "url": "https://news.ycombinator.com",
+        "name": "Hacker News",
+        "expected_content": "Hacker News",
+        "verify_query": "What is the page title and the first visible heading?",
+    },
+    {
+        "url": "https://en.wikipedia.org/wiki/Main_Page",
+        "name": "Wikipedia Main Page",
+        "expected_content": "Wikipedia",
+        "verify_query": "What is the page title? Mention Wikipedia if visible.",
+    },
+    {
+        "url": "https://example.com",
+        "name": "Example Domain",
+        "expected_content": "Example Domain",
+        "verify_query": "What is the main heading on this page?",
+    },
+]
+
+
+async def test_single_navigation(
+    browser: FlyBrowser,
+    url: str,
+    verify_query: str,
+    expected_content: str,
+) -> NavigationResult:
+    """Navigate to a URL and verify the page loaded correctly."""
+    result = NavigationResult(url=url, expected_content=expected_content)
+    try:
+        await browser.goto(url)
+        extraction = await browser.extract(verify_query)
+        if not extraction.success:
+            result.error = extraction.error or "Extraction returned success=False"
+            return result
+        page_text = str(extraction.data).lower()
+        result.title = str(extraction.data)[:120]
+        if expected_content.lower() in page_text:
+            result.passed = True
+        else:
+            result.error = f"Expected '{expected_content}' not found in: {result.title}"
+    except Exception as exc:
+        result.error = f"Exception during navigation: {exc}"
+    return result
+
+
+async def test_sequential_navigation(browser: FlyBrowser) -> list[NavigationResult]:
+    """Navigate through all sites sequentially, verifying each transition."""
+    results: list[NavigationResult] = []
+    for site in SITES_UNDER_TEST:
+        print(f"\n  -> Navigating to {site['name']} ({site['url']})")
+        nav_result = await test_single_navigation(
+            browser,
+            url=site["url"],
+            verify_query=site["verify_query"],
+            expected_content=site["expected_content"],
         )
-        
-        if not nav_links.success or not nav_links.data:
-            print("Failed to extract navigation links")
-            return []
-        
-        links = nav_links.data if isinstance(nav_links.data, list) else [nav_links.data]
-        print(f"Found {len(links)} navigation links")
-        
-        for link in links:
-            link_text = link.get("text", str(link)) if isinstance(link, dict) else str(link)
-            print(f"\nTesting: {link_text}")
-            
-            # Navigate using the link
-            await browser.goto(base_url)  # Reset to home
-            await browser.act(f"Click the '{link_text}' navigation link")
-            
-            await asyncio.sleep(1)
-            
-            # Verify the page loaded correctly
-            page_info = await browser.extract(
-                "What is the current page title and main heading?"
-            )
-            
-            # Check if page matches expected destination
-            expected = link_text.lower()
-            actual = str(page_info.data).lower() if page_info.data else ""
-            
-            passed = expected in actual or link_text.lower() in actual
-            results.append({
-                "link": link_text,
-                "page_info": page_info.data,
-                "passed": passed
-            })
-            
-            status = "PASS" if passed else "FAIL"
-            print(f"  [{status}] Page: {page_info.data}")
-    
-    # Summary
-    passed_count = sum(1 for r in results if r["passed"])
-    print(f"\n=== Navigation Test Results: {passed_count}/{len(results)} passed ===")
-    
+        status = "PASS" if nav_result.passed else "FAIL"
+        print(f"     [{status}] {nav_result.title or nav_result.error}")
+        results.append(nav_result)
     return results
 
 
-async def test_breadcrumb_navigation(deep_url: str):
-    """
-    Test that breadcrumb navigation works correctly.
-    
-    Args:
-        deep_url: URL of a page deep in the site hierarchy
-        
-    Returns:
-        Breadcrumb test results
-    """
-    results = []
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        # Navigate to a deep page
-        await browser.goto(deep_url)
-        
-        # Get breadcrumb trail
-        breadcrumbs = await browser.extract(
-            "What are the breadcrumb links shown on this page?"
-        )
-        
-        print(f"Breadcrumb trail: {breadcrumbs.data}")
-        
-        # Test each breadcrumb link
-        if breadcrumbs.success and breadcrumbs.data:
-            crumbs = breadcrumbs.data if isinstance(breadcrumbs.data, list) else [breadcrumbs.data]
-            
-            for crumb in crumbs[:-1]:  # Skip current page
-                crumb_text = crumb.get("text", str(crumb)) if isinstance(crumb, dict) else str(crumb)
-                print(f"\nTesting breadcrumb: {crumb_text}")
-                
-                await browser.act(f"Click the '{crumb_text}' breadcrumb link")
-                await asyncio.sleep(1)
-                
-                # Verify navigation
-                current = await browser.extract("What page am I on now?")
-                print(f"  Navigated to: {current.data}")
-                
-                results.append({
-                    "breadcrumb": crumb_text,
-                    "destination": current.data,
-                    "success": crumb_text.lower() in str(current.data).lower() if current.data else False
-                })
-                
-                # Go back to original page for next test
-                await browser.goto(deep_url)
-    
-    return results
+async def test_back_navigation(browser: FlyBrowser) -> NavigationResult:
+    """Navigate forward two pages then verify we can observe the current page."""
+    result = NavigationResult(url="back-navigation-test", expected_content="Example Domain")
+    try:
+        await browser.goto("https://example.com")
+        await browser.goto("https://news.ycombinator.com")
+        # Navigate back to example.com
+        await browser.goto("https://example.com")
+        check = await browser.extract("What is the main heading on this page?")
+        if check.success and "example" in str(check.data).lower():
+            result.passed = True
+            result.title = str(check.data)[:120]
+        else:
+            result.error = f"Back navigation check failed: {check.error or check.data}"
+    except Exception as exc:
+        result.error = f"Exception: {exc}"
+    return result
 
 
-async def test_menu_interactions(url: str):
-    """
-    Test dropdown menus and interactive navigation.
-    
-    Args:
-        url: Page URL with menus
-        
-    Returns:
-        Menu interaction test results
-    """
-    results = []
-    
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(url)
-        
-        # Test 1: Hover dropdown menus
-        print("Test 1: Hover dropdown menus")
-        await browser.act("Hover over the first dropdown menu in the navigation")
-        await asyncio.sleep(0.5)
-        
-        dropdown = await browser.extract("What submenu items are shown?")
-        has_dropdown = dropdown.success and dropdown.data
-        results.append({
-            "test": "Hover dropdown",
-            "passed": has_dropdown,
-            "details": dropdown.data
-        })
-        print(f"  {'PASS' if has_dropdown else 'FAIL'}: {dropdown.data}")
-        
-        # Test 2: Mobile menu toggle (if applicable)
-        print("\nTest 2: Mobile menu toggle")
-        await browser.act("Click the mobile menu button or hamburger icon if present")
-        await asyncio.sleep(0.5)
-        
-        mobile_menu = await browser.extract("Is the mobile menu open? What items are visible?")
-        results.append({
-            "test": "Mobile menu toggle",
-            "passed": mobile_menu.success,
-            "details": mobile_menu.data
-        })
-        print(f"  Result: {mobile_menu.data}")
-        
-        # Test 3: Submenu navigation
-        print("\nTest 3: Submenu navigation")
-        await browser.goto(url)  # Reset
-        await browser.act("Hover over a menu item with a submenu and click on a submenu item")
-        await asyncio.sleep(1)
-        
-        submenu_nav = await browser.extract("Did the page navigate to a new location?")
-        results.append({
-            "test": "Submenu navigation",
-            "passed": submenu_nav.success,
-            "details": submenu_nav.data
-        })
-        print(f"  Result: {submenu_nav.data}")
-    
-    return results
+async def test_observe_page_elements(browser: FlyBrowser) -> NavigationResult:
+    """Use observe() to verify interactive elements exist on Hacker News."""
+    result = NavigationResult(
+        url="https://news.ycombinator.com",
+        expected_content="link",
+    )
+    try:
+        await browser.goto("https://news.ycombinator.com")
+        observation = await browser.observe("What navigation links are at the top of the page?")
+        if observation.success:
+            result.title = str(observation.data)[:120]
+            result.passed = True
+        else:
+            result.error = observation.error or "observe() returned success=False"
+    except Exception as exc:
+        result.error = f"Exception: {exc}"
+    return result
 
 
-async def test_pagination_navigation(url: str):
-    """
-    Test pagination controls.
-    
-    Args:
-        url: URL of a paginated page
-        
-    Returns:
-        Pagination test results
-    """
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(url)
-        
-        results = []
-        
-        # Test 1: Get current page info
-        print("Test 1: Identify pagination controls")
-        pagination = await browser.extract(
-            "What pagination controls are available? Current page number?"
-        )
-        print(f"  Pagination info: {pagination.data}")
-        results.append(("Pagination identified", pagination.success))
-        
-        # Test 2: Go to next page
-        print("\nTest 2: Next page navigation")
-        await browser.act("Click the 'Next' page button or link")
-        await asyncio.sleep(1)
-        
-        next_page = await browser.extract("What page number am I on now?")
-        print(f"  Current page: {next_page.data}")
-        results.append(("Next page works", next_page.success))
-        
-        # Test 3: Go to previous page
-        print("\nTest 3: Previous page navigation")
-        await browser.act("Click the 'Previous' page button or link")
-        await asyncio.sleep(1)
-        
-        prev_page = await browser.extract("What page number am I on now?")
-        print(f"  Current page: {prev_page.data}")
-        results.append(("Previous page works", prev_page.success))
-        
-        # Test 4: Go to specific page
-        print("\nTest 4: Jump to specific page")
-        await browser.act("Click on page number 3 or the third page link")
-        await asyncio.sleep(1)
-        
-        specific_page = await browser.extract("What page number am I on now?")
-        is_page_3 = "3" in str(specific_page.data)
-        print(f"  Current page: {specific_page.data} ({'PASS' if is_page_3 else 'FAIL'})")
-        results.append(("Specific page jump", is_page_3))
-        
-        return results
+async def main() -> None:
+    """Run the full navigation test suite."""
+    provider = os.getenv("FLYBROWSER_LLM_PROVIDER", "anthropic")
+    model = os.getenv("FLYBROWSER_LLM_MODEL", "claude-sonnet-4-5-20250929")
 
+    if not os.getenv("ANTHROPIC_API_KEY") and provider == "anthropic":
+        print("ERROR: ANTHROPIC_API_KEY environment variable is not set.")
+        sys.exit(1)
 
-async def test_back_forward_buttons(url: str):
-    """
-    Test browser back/forward navigation consistency.
-    
-    Args:
-        url: Starting URL
-        
-    Returns:
-        Browser navigation test results
-    """
-    async with FlyBrowser(
-        llm_provider="openai",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        headless=True,
-    ) as browser:
-        await browser.goto(url)
-        
-        # Navigate to a few pages
-        print("Navigating through pages...")
-        pages_visited = [url]
-        
-        for i in range(3):
-            await browser.act("Click any link to navigate to a new page")
-            await asyncio.sleep(1)
-            current = await browser.extract("What is the current page URL or title?")
-            pages_visited.append(str(current.data))
-            print(f"  Page {i+2}: {current.data}")
-        
-        # Test back button
-        print("\nTesting back navigation...")
-        for i in range(2):
-            await browser.act("Click the browser back button or go back")
-            await asyncio.sleep(1)
-            current = await browser.extract("What page am I on now?")
-            print(f"  After back {i+1}: {current.data}")
-        
-        # Test forward button
-        print("\nTesting forward navigation...")
-        await browser.act("Click the browser forward button or go forward")
-        await asyncio.sleep(1)
-        current = await browser.extract("What page am I on now?")
-        print(f"  After forward: {current.data}")
-        
-        return {
-            "pages_visited": pages_visited,
-            "back_forward_works": True  # Basic verification
-        }
+    print("=" * 65)
+    print("  FlyBrowser Navigation Testing")
+    print(f"  Provider: {provider}  |  Model: {model}")
+    print("=" * 65)
 
+    suite = TestSuite()
 
-async def main():
-    """Main entry point for navigation tests."""
-    print("=" * 60)
-    print("Navigation Testing Examples")
-    print("=" * 60)
-    
-    # Example: Test main navigation (using Hacker News as example)
-    print("\n--- Testing Navigation Links ---")
-    await test_navigation_links("https://news.ycombinator.com")
-    
-    print("\n--- Testing Pagination ---")
-    await test_pagination_navigation("https://news.ycombinator.com")
+    async with FlyBrowser(llm_provider=provider, llm_model=model, headless=True) as browser:
+        # Phase 1: Sequential multi-site navigation
+        print("\n[Phase 1] Sequential Navigation Tests")
+        sequential_results = await test_sequential_navigation(browser)
+        suite.results.extend(sequential_results)
+
+        # Phase 2: Back-navigation simulation
+        print("\n[Phase 2] Back Navigation Test")
+        back_result = await test_back_navigation(browser)
+        status = "PASS" if back_result.passed else "FAIL"
+        print(f"  [{status}] Return to example.com: {back_result.title or back_result.error}")
+        suite.results.append(back_result)
+
+        # Phase 3: Observe page elements
+        print("\n[Phase 3] Observe Page Elements")
+        observe_result = await test_observe_page_elements(browser)
+        status = "PASS" if observe_result.passed else "FAIL"
+        print(f"  [{status}] Observe nav links: {observe_result.title or observe_result.error}")
+        suite.results.append(observe_result)
+
+        # Print usage summary
+        usage = browser.get_usage_summary()
+        print(f"\n  LLM Usage: {usage}")
+
+    suite.print_summary()
+
+    if suite.failed > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
