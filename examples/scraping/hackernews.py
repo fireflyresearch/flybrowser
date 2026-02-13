@@ -16,14 +16,13 @@
 Advanced Hacker News Scraper with Pagination
 
 Scrapes stories across multiple pages of Hacker News, extracting structured
-fields (title, URL, score, author, comments count) for each story.  Pagination
-is driven by clicking the "More" link at the bottom of each page, so extraction
-and navigation happen in a single browser session.
+fields (title, URL, score, author, comments count) for each story.
 
-Business value:
-  - Competitive intelligence: monitor trending tech topics daily.
-  - Content curation: feed extracted stories into a recommendation pipeline.
-  - Analytics: track which domains and authors dominate HN over time.
+Performance strategy:
+  - Uses direct URL navigation (goto) instead of agent-driven "click More"
+    to avoid expensive multi-step LLM reasoning for simple pagination.
+  - Asks the LLM to respond in JSON format for easier downstream parsing.
+  - Handles both structured (JSON) and free-text LLM responses gracefully.
 
 Prerequisites:
     export ANTHROPIC_API_KEY="sk-ant-..."
@@ -34,6 +33,7 @@ Prerequisites:
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 from flybrowser import FlyBrowser
@@ -43,26 +43,45 @@ from flybrowser import FlyBrowser
 # ---------------------------------------------------------------------------
 PROVIDER = os.getenv("FLYBROWSER_LLM_PROVIDER", "anthropic")
 MODEL = os.getenv("FLYBROWSER_LLM_MODEL", "claude-sonnet-4-5-20250929")
-MAX_PAGES = 3  # Number of HN pages to scrape (30 stories per page)
-START_URL = "https://news.ycombinator.com"
+MAX_PAGES = 2  # Number of HN pages to scrape (30 stories per page)
 
 
-async def scrape_hackernews(max_pages: int = MAX_PAGES) -> list[dict]:
+def _parse_stories(raw: str, page_num: int) -> list[dict]:
+    """Parse LLM response into a list of story dicts.
+
+    The LLM may return:
+      - A JSON array of objects (ideal)
+      - A JSON array wrapped in markdown code fences
+      - Free-text with story data embedded
     """
-    Scrape Hacker News stories across multiple pages.
+    if not raw:
+        return []
 
-    For each page the scraper:
-      1. Extracts all stories with structured fields.
-      2. Clicks the "More" link to advance to the next page.
+    text = raw.strip()
 
-    Args:
-        max_pages: How many pages to scrape (default 3 = ~90 stories).
+    # Strip markdown code fences if present
+    fenced = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
 
-    Returns:
-        Aggregated list of story dicts.
-    """
+    # Try JSON parse
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict):
+                    item["page"] = page_num
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Fallback: return the raw text as a single item
+    return [{"raw_text": text, "page": page_num}]
+
+
+async def scrape_hackernews(max_pages: int = MAX_PAGES) -> tuple:
+    """Scrape Hacker News stories across multiple pages."""
     all_stories: list[dict] = []
-    cumulative_tokens = 0
 
     async with FlyBrowser(
         llm_provider=PROVIDER,
@@ -70,79 +89,60 @@ async def scrape_hackernews(max_pages: int = MAX_PAGES) -> list[dict]:
         headless=True,
     ) as browser:
 
-        await browser.goto(START_URL)
-        print(f"Navigated to {START_URL}")
-
         for page_num in range(1, max_pages + 1):
-            print(f"\n--- Page {page_num}/{max_pages} ---")
+            # Direct URL navigation — no LLM cost for pagination
+            url = f"https://news.ycombinator.com/news?p={page_num}"
+            await browser.goto(url)
+            print(f"\n--- Page {page_num}/{max_pages} ({url}) ---")
 
-            # Extract stories from the current page
             result = await browser.extract(
-                "Extract every story on this page. For each story return: "
-                "rank (integer), title (string), url (the link the title "
-                "points to), score (integer points), author (string username), "
-                "and comments_count (integer number of comments, 0 if none)."
+                "Extract every story visible on this page as a JSON array. "
+                "Each object must have: rank (int), title (str), url (str), "
+                "score (int), author (str), comments_count (int, 0 if none). "
+                "Return ONLY the JSON array, no other text."
             )
 
             if result.success and result.data:
-                stories = result.data if isinstance(result.data, list) else [result.data]
-
-                # Tag each story with the page it came from
-                for story in stories:
-                    if isinstance(story, dict):
-                        story["page"] = page_num
-
+                stories = _parse_stories(str(result.data), page_num)
                 all_stories.extend(stories)
-                cumulative_tokens += result.llm_usage.total_tokens
-
-                print(f"  Extracted {len(stories)} stories "
-                      f"(tokens this page: {result.llm_usage.total_tokens:,}, "
-                      f"duration: {result.execution.duration_seconds:.1f}s)")
+                print(f"  Extracted {len(stories)} stories")
             else:
                 print(f"  Extraction failed: {result.error}")
                 break
 
-            # Navigate to the next page by clicking "More"
-            if page_num < max_pages:
-                nav = await browser.act(
-                    "Click the 'More' link at the bottom of the story list"
-                )
-                if not nav.success:
-                    print("  Could not navigate to next page. Stopping.")
-                    break
-                cumulative_tokens += nav.llm_usage.total_tokens
-
-        # ----- Session-level summary -----
         usage = browser.get_usage_summary()
 
-    return all_stories, usage, cumulative_tokens
+    return all_stories, usage
 
 
-def display_results(stories: list[dict], usage: dict, cumulative_tokens: int) -> None:
+def display_results(stories: list[dict], usage: dict) -> None:
     """Pretty-print the scraping results and token usage."""
     print(f"\n{'=' * 70}")
     print(f"  HACKER NEWS SCRAPE RESULTS")
     print(f"{'=' * 70}")
     print(f"  Total stories collected: {len(stories)}")
-    print(f"  Cumulative tokens used:  {cumulative_tokens:,}")
     print(f"  Session total tokens:    {usage.get('total_tokens', 0):,}")
-    print(f"  Session API calls:       {usage.get('calls_count', 0)}")
     print(f"  Estimated cost:          ${usage.get('cost_usd', 0):.4f}")
+    print(f"  Model:                   {usage.get('model', 'N/A')}")
 
     # Display top stories by score
-    scored = [s for s in stories if isinstance(s, dict) and isinstance(s.get("score"), (int, float))]
+    scored = [s for s in stories if isinstance(s.get("score"), (int, float))]
     scored.sort(key=lambda s: s.get("score", 0), reverse=True)
 
-    print(f"\n  Top 10 stories by score:")
-    print(f"  {'Rank':<6} {'Score':<8} {'Comments':<10} {'Title'}")
-    print(f"  {'-'*6} {'-'*8} {'-'*10} {'-'*44}")
-
-    for story in scored[:10]:
-        rank = story.get("rank", "?")
-        score = story.get("score", 0)
-        comments = story.get("comments_count", 0)
-        title = str(story.get("title", ""))[:44]
-        print(f"  {rank:<6} {score:<8} {comments:<10} {title}")
+    if scored:
+        print(f"\n  Top 10 stories by score:")
+        print(f"  {'Rank':<6} {'Score':<8} {'Comments':<10} {'Title'}")
+        print(f"  {'-'*6} {'-'*8} {'-'*10} {'-'*44}")
+        for story in scored[:10]:
+            print(f"  {story.get('rank', '?'):<6} "
+                  f"{story.get('score', 0):<8} "
+                  f"{story.get('comments_count', 0):<10} "
+                  f"{str(story.get('title', ''))[:44]}")
+    else:
+        print("\n  (LLM returned free-text — showing raw extractions)")
+        for i, story in enumerate(stories[:5], 1):
+            text = story.get("raw_text", str(story))[:120]
+            print(f"  [{i}] {text}...")
 
 
 async def main() -> None:
@@ -150,13 +150,8 @@ async def main() -> None:
     print(f"Hacker News Scraper | Provider: {PROVIDER} | Model: {MODEL}")
     print(f"Pages to scrape: {MAX_PAGES}")
 
-    try:
-        stories, usage, cumulative_tokens = await scrape_hackernews()
-    except Exception as exc:
-        print(f"\nFatal error during scraping: {exc}")
-        return
-
-    display_results(stories, usage, cumulative_tokens)
+    stories, usage = await scrape_hackernews()
+    display_results(stories, usage)
 
     # Persist to JSON
     output = {
@@ -165,11 +160,9 @@ async def main() -> None:
         "stories": stories,
         "usage": usage,
     }
-
     filename = f"hackernews_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, "w") as fh:
         json.dump(output, fh, indent=2, default=str)
-
     print(f"\nResults saved to {filename}")
 
 
