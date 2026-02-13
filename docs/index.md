@@ -4,7 +4,7 @@
 
 FlyBrowser combines [Playwright](https://playwright.dev/) browser control with LLM intelligence, letting you automate the web using plain English. Built on [fireflyframework-genai](https://github.com/fireflyframework/fireflyframework-genai) -- Firefly's open-source agent framework -- it inherits production-grade ReAct reasoning, multi-provider LLM support, and a composable toolkit system.
 
-- **Version**: 26.02.01 (CalVer)
+- **Version**: 26.02.05 (CalVer)
 - **Python**: >= 3.13
 - **License**: Apache 2.0
 - **Author**: Firefly Software Solutions Inc

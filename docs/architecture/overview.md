@@ -293,7 +293,7 @@ FlyBrowser is intentionally thin. The heavy lifting comes from **fireflyframewor
 
 ```
 flybrowser/
-├── __init__.py              # Public API, version 26.02.01
+├── __init__.py              # Public API, version 26.02.05
 ├── sdk.py                   # FlyBrowser class (unified SDK)
 ├── client.py                # HTTP client for server mode
 ├── agents/

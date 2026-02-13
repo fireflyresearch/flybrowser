@@ -334,7 +334,7 @@ tasks:
       - |
         if [ -z "{{.VERSION}}" ]; then
           echo "Error: VERSION is required"
-          echo "Usage: task release VERSION=26.02.01"
+          echo "Usage: task release VERSION=26.02.05"
           exit 1
         fi
       - task: check
